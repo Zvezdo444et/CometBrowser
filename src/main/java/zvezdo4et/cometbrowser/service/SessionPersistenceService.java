@@ -7,7 +7,10 @@ import zvezdo4et.cometbrowser.util.UserDataDirUtil;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class SessionPersistenceService {
@@ -19,7 +22,8 @@ public class SessionPersistenceService {
     private final File sessionFile = new File(
             UserDataDirUtil.getAppDataDir() + File.separator + "sessions.json");
 
-    private SessionPersistenceService() {}
+    private SessionPersistenceService() {
+    }
 
     public static SessionPersistenceService getInstance() {
         if (instance == null) instance = new SessionPersistenceService();
@@ -33,7 +37,8 @@ public class SessionPersistenceService {
     private void loadFromDisk() {
         if (!sessionFile.exists()) return;
         try {
-            List<Map<String, Object>> raw = mapper.readValue(sessionFile, new TypeReference<>() {});
+            List<Map<String, Object>> raw = mapper.readValue(sessionFile, new TypeReference<>() {
+            });
             for (Map<String, Object> entry : raw) {
                 TabSession session = new TabSession(
                         (String) entry.get("id"),
@@ -85,12 +90,21 @@ public class SessionPersistenceService {
 
     public void closeSession(String sessionId) {
         TabSession s = sessions.get(sessionId);
-        if (s != null) { s.setClosed(true); s.setActive(false); saveAll(); }
+        if (s != null) {
+            s.setClosed(true);
+            s.setActive(false);
+            saveAll();
+        }
     }
 
     public void reopenSession(String sessionId) {
         TabSession s = sessions.get(sessionId);
-        if (s != null) { s.setClosed(false); s.setActive(true); s.touch(); saveAll(); }
+        if (s != null) {
+            s.setClosed(false);
+            s.setActive(true);
+            s.touch();
+            saveAll();
+        }
     }
 
     public void deleteSession(String sessionId) {
@@ -106,5 +120,7 @@ public class SessionPersistenceService {
         return sessions.values().stream().filter(TabSession::isClosed).collect(Collectors.toList());
     }
 
-    public TabSession getSession(String sessionId) { return sessions.get(sessionId); }
+    public TabSession getSession(String sessionId) {
+        return sessions.get(sessionId);
+    }
 }

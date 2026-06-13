@@ -20,10 +20,23 @@ public class Bookmark {
         this.url = url;
     }
 
-    public String getId()   { return id; }
-    public String getName() { return name; }
-    public String getUrl()  { return url; }
+    public String getId() {
+        return id;
+    }
 
-    public void setName(String name) { this.name = name; }
-    public void setUrl(String url)   { this.url = url; }
+    public String getName() {
+        return name;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
+    }
 }

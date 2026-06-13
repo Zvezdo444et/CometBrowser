@@ -3,22 +3,20 @@ package zvezdo4et.cometbrowser.controller;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.WString;
+import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.HWND;
 import com.sun.jna.platform.win32.WinDef.RECT;
-import com.sun.jna.platform.win32.User32;
 import zvezdo4et.cometbrowser.native_.CometWebView2Library;
 import zvezdo4et.cometbrowser.native_.WebView2Thread;
 
-import java.awt.Canvas;
-import java.awt.Dimension;
+import javax.swing.*;
+import java.awt.*;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.HierarchyBoundsAdapter;
 import java.awt.event.HierarchyEvent;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
-import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 
 public class WebView2Panel extends Canvas {
 
@@ -72,9 +70,17 @@ public class WebView2Panel extends Canvas {
         });
     }
 
-    public void setOnTitleChanged(Consumer<String> cb) { this.onTitleChanged = cb; }
-    public void setOnUrlChanged(Consumer<String> cb) { this.onUrlChanged = cb; }
-    public void setOnLoadingChanged(Consumer<Boolean> cb) { this.onLoadingChanged = cb; }
+    public void setOnTitleChanged(Consumer<String> cb) {
+        this.onTitleChanged = cb;
+    }
+
+    public void setOnUrlChanged(Consumer<String> cb) {
+        this.onUrlChanged = cb;
+    }
+
+    public void setOnLoadingChanged(Consumer<Boolean> cb) {
+        this.onLoadingChanged = cb;
+    }
 
     @Override
     public void addNotify() {

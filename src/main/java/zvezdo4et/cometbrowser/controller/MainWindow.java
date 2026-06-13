@@ -24,6 +24,9 @@ public class MainWindow extends JFrame {
 
     private static final Logger LOG = Logger.getLogger(MainWindow.class.getName());
 
+    private static final String ICON_CLOSE_TAB = "\u2715"; // ✕
+
+    private JPanel titleBar;
     private JPanel profileBar;
     private JPanel profileCards;
     private CardLayout cardLayout;
@@ -32,12 +35,20 @@ public class MainWindow extends JFrame {
 
     private String selectedProfileId;
 
-    private final Map<String, BrowserPanel> tabPanels = new HashMap<>();
+    private Point dragOffset;
+    private JButton maximizeBtn;
 
+    private Rectangle normalBounds;
+    private boolean isMaximized = false;
+
+    private SparkleGlassPane sparkleGlassPane;
+
+    private final Map<String, BrowserPanel> tabPanels = new HashMap<>();
     private final Map<String, ProfileTabs> profileTabs = new HashMap<>();
 
     public MainWindow() {
         super("CometBrowser");
+        setUndecorated(true);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(1280, 800);
         setMinimumSize(new Dimension(800, 500));
@@ -46,10 +57,18 @@ public class MainWindow extends JFrame {
 
         addWindowListener(new WindowAdapter() {
             @Override
-            public void windowClosing(WindowEvent e) { onExit(); }
+            public void windowClosing(WindowEvent e) {
+                onExit();
+            }
         });
 
         buildUI();
+
+        sparkleGlassPane = new SparkleGlassPane();
+        sparkleGlassPane.setOpaque(false);
+        setGlassPane(sparkleGlassPane);
+        sparkleGlassPane.setVisible(true);
+
         buildProfileBar();
         ensureProfileTabs(selectedProfileId);
         cardLayout.show(profileCards, selectedProfileId);
@@ -58,7 +77,7 @@ public class MainWindow extends JFrame {
     private void buildUI() {
         setLayout(new BorderLayout());
 
-        profileBar = new JPanel() {
+        titleBar = new JPanel(new BorderLayout()) {
             @Override
             protected void paintComponent(Graphics g) {
                 g.setColor(Theme.VOID);
@@ -67,9 +86,37 @@ public class MainWindow extends JFrame {
                 g.fillRect(0, getHeight() - 1, getWidth(), 1);
             }
         };
+        titleBar.setOpaque(false);
+        titleBar.setPreferredSize(new Dimension(0, 44));
+
+        profileBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         profileBar.setOpaque(false);
-        profileBar.setLayout(new FlowLayout(FlowLayout.LEFT, 6, 6));
-        profileBar.setPreferredSize(new Dimension(0, 44));
+
+        JPanel windowControls = buildWindowControls();
+
+        titleBar.add(profileBar, BorderLayout.CENTER);
+        titleBar.add(windowControls, BorderLayout.EAST);
+
+        titleBar.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                dragOffset = e.getPoint();
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) toggleMaximize();
+            }
+        });
+        titleBar.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                if (dragOffset == null) return;
+                if (isMaximized) restoreFromMaximize();
+                Point loc = getLocation();
+                setLocation(loc.x + e.getX() - dragOffset.x, loc.y + e.getY() - dragOffset.y);
+            }
+        });
 
         cardLayout = new CardLayout();
         profileCards = new JPanel(cardLayout) {
@@ -97,9 +144,86 @@ public class MainWindow extends JFrame {
         bottom.setOpaque(false);
         bottom.add(statusLabel, BorderLayout.WEST);
 
-        add(profileBar, BorderLayout.NORTH);
+        add(titleBar, BorderLayout.NORTH);
         add(profileCards, BorderLayout.CENTER);
         add(bottom, BorderLayout.SOUTH);
+    }
+
+    private JPanel buildWindowControls() {
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        controls.setOpaque(false);
+
+        JButton minBtn = makeWindowButton("\u2212", false);   // −
+        minBtn.addActionListener(e -> setExtendedState(JFrame.ICONIFIED));
+
+        maximizeBtn = makeWindowButton("\u25A1", false);       // □
+        maximizeBtn.addActionListener(e -> toggleMaximize());
+
+        JButton closeBtn = makeWindowButton("\u2715", true);   // ✕
+        closeBtn.addActionListener(e -> onExit());
+
+        controls.add(minBtn);
+        controls.add(maximizeBtn);
+        controls.add(closeBtn);
+        return controls;
+    }
+
+    private JButton makeWindowButton(String text, boolean isClose) {
+        JButton btn = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                if (getModel().isRollover()) {
+                    g2.setColor(isClose ? Theme.ALERT : Theme.CRATER);
+                    g2.fillRect(0, 0, getWidth(), getHeight());
+                }
+                g2.setColor((isClose && getModel().isRollover()) ? Color.WHITE : Theme.STARDUST);
+                g2.setFont(Theme.FONT_ICON.deriveFont(13f));
+                FontMetrics fm = g2.getFontMetrics();
+                int tx = (getWidth() - fm.stringWidth(getText())) / 2;
+                int ty = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
+                g2.drawString(getText(), tx, ty);
+                g2.dispose();
+            }
+        };
+        btn.setPreferredSize(new Dimension(46, 44));
+        btn.setBorderPainted(false);
+        btn.setContentAreaFilled(false);
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return btn;
+    }
+
+    private void toggleMaximize() {
+        if (isMaximized) restoreFromMaximize();
+        else maximizeToScreenBounds();
+    }
+
+    private void maximizeToScreenBounds() {
+        normalBounds = getBounds();
+        GraphicsConfiguration gc = getGraphicsConfiguration();
+        if (gc == null)
+            gc = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                    .getDefaultScreenDevice().getDefaultConfiguration();
+
+        Rectangle screenBounds = gc.getBounds();
+        Insets screenInsets = Toolkit.getDefaultToolkit().getScreenInsets(gc);
+
+        int x = screenBounds.x + screenInsets.left;
+        int y = screenBounds.y + screenInsets.top;
+        int w = screenBounds.width - screenInsets.left - screenInsets.right;
+        int h = screenBounds.height - screenInsets.top - screenInsets.bottom;
+
+        setBounds(x, y, w, h);
+        isMaximized = true;
+        maximizeBtn.setText("\u2750");  // ❐
+    }
+
+    private void restoreFromMaximize() {
+        if (normalBounds != null) setBounds(normalBounds);
+        isMaximized = false;
+        maximizeBtn.setText("\u25A1");  // □
     }
 
     private static class ProfileTabs {
@@ -126,9 +250,20 @@ public class MainWindow extends JFrame {
         lbl.setForeground(Theme.DIM);
         lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         lbl.addMouseListener(new MouseAdapter() {
-            @Override public void mouseClicked(MouseEvent e) { openNewTab(pt); }
-            @Override public void mouseEntered(MouseEvent e) { lbl.setForeground(Theme.STARDUST); }
-            @Override public void mouseExited(MouseEvent e)  { lbl.setForeground(Theme.DIM); }
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                openNewTab(pt);
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                lbl.setForeground(Theme.STARDUST);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                lbl.setForeground(Theme.DIM);
+            }
         });
         return lbl;
     }
@@ -146,9 +281,7 @@ public class MainWindow extends JFrame {
         profileBar.add(addBtn);
 
         if (!profiles.isEmpty()) {
-            if (selectedProfileId == null) {
-                selectedProfileId = profiles.get(0).getId();
-            }
+            if (selectedProfileId == null) selectedProfileId = profiles.get(0).getId();
             markProfileSelected(selectedProfileId);
         }
 
@@ -180,20 +313,25 @@ public class MainWindow extends JFrame {
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
         Color dotColor;
-        try { dotColor = Color.decode(profile.getAvatarColor()); }
-        catch (Exception ex) { dotColor = Theme.COMET; }
+        try {
+            dotColor = Color.decode(profile.getAvatarColor());
+        } catch (Exception ex) {
+            dotColor = Theme.COMET;
+        }
 
         JPanel dot = makeDot(dotColor);
         JLabel nameLbl = new JLabel(profile.getName());
         nameLbl.setFont(Theme.FONT_REGULAR);
         nameLbl.setForeground(Theme.STARDUST);
+        nameLbl.setToolTipText("Двойной клик — переименовать");
+        nameLbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
-        JButton deleteBtn = new JButton("x") {
+        JButton deleteBtn = new JButton(ICON_CLOSE_TAB) {
             @Override
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(getModel().isRollover() ? Theme.ALERT : Theme.DIM);
+                g2.setColor(getModel().isRollover() ? Theme.DELETE_HOVER : Theme.DIM);
                 g2.setFont(Theme.FONT_ICON_SMALL);
                 FontMetrics fm = g2.getFontMetrics();
                 g2.drawString(getText(),
@@ -218,21 +356,42 @@ public class MainWindow extends JFrame {
         btn.add(left, BorderLayout.CENTER);
         btn.add(deleteBtn, BorderLayout.EAST);
 
-        btn.addMouseListener(new MouseAdapter() {
+        nameLbl.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getSource() == deleteBtn) return;
+                if (e.getClickCount() >= 2) {
+                    showRenameProfileDialog(profile);
+                    return;
+                }
                 if (!profile.getId().equals(selectedProfileId)) {
                     selectedProfileId = profile.getId();
                     markProfileSelected(selectedProfileId);
                     switchToProfile(selectedProfileId);
                 }
             }
+        });
+
+        btn.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getSource() == deleteBtn) return;
+                if (e.getClickCount() >= 2) {
+                    showRenameProfileDialog(profile);
+                    return;
+                }
+                if (!profile.getId().equals(selectedProfileId)) {
+                    selectedProfileId = profile.getId();
+                    markProfileSelected(selectedProfileId);
+                    switchToProfile(selectedProfileId);
+                }
+            }
+
             @Override
             public void mouseEntered(MouseEvent e) {
                 deleteBtn.setVisible(true);
                 btn.repaint();
             }
+
             @Override
             public void mouseExited(MouseEvent e) {
                 Point p = e.getPoint();
@@ -260,7 +419,11 @@ public class MainWindow extends JFrame {
                 g2.fill(new Ellipse2D.Float(0, 2, 10, 10));
                 g2.dispose();
             }
-            @Override public Dimension getPreferredSize() { return new Dimension(10, 14); }
+
+            @Override
+            public Dimension getPreferredSize() {
+                return new Dimension(10, 14);
+            }
         };
     }
 
@@ -342,9 +505,7 @@ public class MainWindow extends JFrame {
             any = true;
         }
 
-        if (!any) {
-            openNewTab(pt);
-        }
+        if (!any) openNewTab(pt);
     }
 
     private void switchToProfile(String profileId) {
@@ -373,9 +534,7 @@ public class MainWindow extends JFrame {
         }
 
         ProfileTabs pt = profileTabs.remove(profile.getId());
-        if (pt != null) {
-            profileCards.remove(pt.pane);
-        }
+        if (pt != null) profileCards.remove(pt.pane);
 
         ProfileManager.getInstance().deleteProfile(profile.getId());
         List<BrowserProfile> remaining = ProfileManager.getInstance().getAllProfiles();
@@ -430,22 +589,29 @@ public class MainWindow extends JFrame {
 
     private JPanel buildTabHeader(ProfileTabs pt, TabSession session, BrowserProfile profile) {
         Color dotColor;
-        try { dotColor = Color.decode(profile.getAvatarColor()); }
-        catch (Exception ex) { dotColor = Theme.COMET; }
+        try {
+            dotColor = Color.decode(profile.getAvatarColor());
+        } catch (Exception ex) {
+            dotColor = Theme.COMET;
+        }
 
         JPanel dot = makeDot(dotColor);
 
         JLabel titleLbl = new JLabel(session.getTitle());
         titleLbl.setFont(Theme.FONT_SMALL);
         titleLbl.setForeground(Theme.STARDUST);
-        titleLbl.setMaximumSize(new Dimension(120, 20));
 
-        JButton closeBtn = new JButton("x") {
+        int reservedWidth = dot.getPreferredSize().width + 16 + 4;
+        int availableTextWidth = MAX_TAB_TEXT_WIDTH - reservedWidth;
+        titleLbl.setText(elideText(titleLbl, session.getTitle(), availableTextWidth));
+        titleLbl.setToolTipText(session.getTitle());
+
+        JButton closeBtn = new JButton(ICON_CLOSE_TAB) {
             @Override
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(getModel().isRollover() ? Theme.ALERT : Theme.DIM);
+                g2.setColor(getModel().isRollover() ? Theme.DELETE_HOVER : Theme.DIM);
                 g2.setFont(Theme.FONT_ICON_SMALL);
                 FontMetrics fm = g2.getFontMetrics();
                 g2.drawString(getText(),
@@ -471,7 +637,43 @@ public class MainWindow extends JFrame {
         header.add(dot);
         header.add(titleLbl);
         header.add(closeBtn);
+
+        MouseAdapter selectTabListener = new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                int idx = pt.pane.indexOfTabComponent(header);
+                if (idx >= 0) pt.pane.setSelectedIndex(idx);
+            }
+        };
+        header.addMouseListener(selectTabListener);
+        titleLbl.addMouseListener(selectTabListener);
+        dot.addMouseListener(selectTabListener);
+
+        if (pt.pane.getUI() instanceof CometTabbedPaneUI ui) {
+            ui.attachHoverListener(header, () -> pt.pane.indexOfTabComponent(header));
+        }
+
         return header;
+    }
+
+    private static final int MAX_TAB_TEXT_WIDTH = 200;
+
+    private String elideText(JLabel label, String text, int maxWidth) {
+        if (text == null) return "";
+        FontMetrics fm = label.getFontMetrics(label.getFont());
+        if (fm.stringWidth(text) <= maxWidth) return text;
+
+        String ellipsis = "…";
+        int ellipsisWidth = fm.stringWidth(ellipsis);
+        int width = ellipsisWidth;
+        int i = 0;
+        while (i < text.length()) {
+            int charWidth = fm.charWidth(text.charAt(i));
+            if (width + charWidth > maxWidth) break;
+            width += charWidth;
+            i++;
+        }
+        return text.substring(0, Math.max(0, i)) + ellipsis;
     }
 
     private void closeTabAt(ProfileTabs pt, int idx, String sessionId) {
@@ -530,6 +732,38 @@ public class MainWindow extends JFrame {
         }
     }
 
+    private void showRenameProfileDialog(BrowserProfile profile) {
+        JTextField field = new JTextField(20);
+        field.setFont(Theme.FONT_REGULAR);
+        field.setBackground(Theme.CRATER);
+        field.setForeground(Theme.STARDUST);
+        field.setCaretColor(Theme.STARDUST);
+        field.setText(profile.getName());
+        field.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Theme.BORDER),
+                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setBackground(Theme.NEBULA);
+        panel.setBorder(new EmptyBorder(12, 12, 12, 12));
+        JLabel lbl = new JLabel("Новое название орбиты:");
+        lbl.setFont(Theme.FONT_REGULAR);
+        lbl.setForeground(Theme.STARDUST);
+        panel.add(lbl, BorderLayout.NORTH);
+        panel.add(field, BorderLayout.CENTER);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Переименовать орбиту",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result == JOptionPane.OK_OPTION) {
+            String name = field.getText().trim();
+            if (!name.isBlank() && !name.equals(profile.getName())) {
+                ProfileManager.getInstance().renameProfile(profile.getId(), name);
+                buildProfileBar();
+                setStatus("Орбита переименована в «" + name + "».");
+            }
+        }
+    }
+
     private void setStatus(String text) {
         statusLabel.setText(text);
         statusClearTimer.restart();
@@ -543,7 +777,15 @@ public class MainWindow extends JFrame {
         System.exit(0);
     }
 
+
     private static class CometTabbedPaneUI extends javax.swing.plaf.basic.BasicTabbedPaneUI {
+
+        private static final int MAX_TAB_WIDTH = 200;
+
+        private int hoveredTabIndex = -1;
+        private Timer sparkleTimer;
+        private int sparkleFrame = 0;
+
         @Override
         protected void installDefaults() {
             super.installDefaults();
@@ -557,11 +799,141 @@ public class MainWindow extends JFrame {
         }
 
         @Override
+        protected void installListeners() {
+            super.installListeners();
+
+            tabPane.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    updateHover(tabForCoordinate(tabPane, e.getX(), e.getY()));
+                }
+            });
+
+            tabPane.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    updateHover(-1);
+                }
+            });
+        }
+
+        private long hoverVersion = 0;
+
+        private void updateHover(int idx) {
+            if (idx == -1) {
+                if (hoveredTabIndex == -1) return;
+                final long ver = hoverVersion;
+                SwingUtilities.invokeLater(() -> {
+                    if (hoverVersion != ver) return;
+                    applyHover(-1);
+                });
+            } else {
+                hoverVersion++;
+                applyHover(idx);
+            }
+        }
+
+        private void applyHover(int idx) {
+            if (idx == hoveredTabIndex) return;
+            hoveredTabIndex = idx;
+            if (hoveredTabIndex >= 0) {
+                startSparkleAnimation();
+            } else {
+                stopSparkleAnimation();
+                if (tabPane != null) {
+                    Window w = SwingUtilities.getWindowAncestor(tabPane);
+                    if (w instanceof MainWindow mw && mw.sparkleGlassPane != null)
+                        mw.sparkleGlassPane.setSparkleData(null, 0);
+                }
+            }
+            tabPane.repaint();
+        }
+
+        void attachHoverListener(Component header, java.util.function.IntSupplier indexSupplier) {
+            java.awt.event.MouseAdapter listener = new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    updateHover(indexSupplier.getAsInt());
+                }
+
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    updateHover(indexSupplier.getAsInt());
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    Point p = e.getPoint();
+                    SwingUtilities.convertPointToScreen(p, e.getComponent());
+                    Rectangle bounds = header.getBounds();
+                    Point headerLoc = header.getLocationOnScreen();
+                    Rectangle screen = new Rectangle(headerLoc.x, headerLoc.y, bounds.width, bounds.height);
+                    if (!screen.contains(p)) updateHover(-1);
+                }
+            };
+            attachRecursively(header, listener);
+        }
+
+        private void attachRecursively(Component c, java.awt.event.MouseAdapter listener) {
+            c.addMouseListener(listener);
+            c.addMouseMotionListener(listener);
+            if (c instanceof Container container)
+                for (Component child : container.getComponents())
+                    attachRecursively(child, listener);
+        }
+
+        @Override
+        protected void uninstallListeners() {
+            stopSparkleAnimation();
+            super.uninstallListeners();
+        }
+
+        private void startSparkleAnimation() {
+            if (sparkleTimer != null && sparkleTimer.isRunning()) return;
+            sparkleFrame = 0;
+            sparkleTimer = new Timer(60, e -> {
+                sparkleFrame++;
+                updateGlassPaneSparkles();
+                if (tabPane != null) tabPane.repaint();
+            });
+            sparkleTimer.start();
+        }
+
+        private void stopSparkleAnimation() {
+            if (sparkleTimer != null) {
+                sparkleTimer.stop();
+                sparkleTimer = null;
+            }
+        }
+
+        private void updateGlassPaneSparkles() {
+            if (tabPane == null || hoveredTabIndex < 0) return;
+            Window w = SwingUtilities.getWindowAncestor(tabPane);
+            if (!(w instanceof MainWindow mw) || mw.sparkleGlassPane == null) return;
+
+            Rectangle tabBounds = getTabBounds(tabPane, hoveredTabIndex);
+            if (tabBounds == null) return;
+
+            Point origin = SwingUtilities.convertPoint(tabPane, tabBounds.x, tabBounds.y, mw.sparkleGlassPane);
+            mw.sparkleGlassPane.setSparkleData(
+                    new Rectangle(origin.x, origin.y, tabBounds.width, tabBounds.height),
+                    sparkleFrame);
+        }
+
+        @Override
+        protected int calculateTabWidth(int tabPlacement, int tabIndex, FontMetrics metrics) {
+            return Math.min(super.calculateTabWidth(tabPlacement, tabIndex, metrics), MAX_TAB_WIDTH);
+        }
+
+        @Override
         protected void paintTabBackground(Graphics g, int tabPlacement, int tabIndex,
                                           int x, int y, int w, int h, boolean isSelected) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(isSelected ? Theme.NEBULA : Theme.VOID);
+            Color bg = isSelected ? Theme.NEBULA
+                    : tabIndex == hoveredTabIndex ? Theme.CRATER
+                    : Theme.VOID;
+            g2.setColor(bg);
             g2.fill(new RoundRectangle2D.Float(x + 1, y + 2, w - 2, h - 2, 6, 6));
             if (isSelected) {
                 g2.setColor(Theme.BORDER);
@@ -572,7 +944,8 @@ public class MainWindow extends JFrame {
 
         @Override
         protected void paintTabBorder(Graphics g, int tabPlacement, int tabIndex,
-                                      int x, int y, int w, int h, boolean isSelected) {}
+                                      int x, int y, int w, int h, boolean isSelected) {
+        }
 
         @Override
         protected void paintContentBorder(Graphics g, int tabPlacement, int selectedIndex) {
@@ -585,11 +958,73 @@ public class MainWindow extends JFrame {
         @Override
         protected void paintFocusIndicator(Graphics g, int tabPlacement, Rectangle[] rects,
                                            int tabIndex, Rectangle iconRect, Rectangle textRect,
-                                           boolean isSelected) {}
+                                           boolean isSelected) {
+        }
 
         @Override
         protected int calculateTabHeight(int tabPlacement, int tabIndex, int fontHeight) {
             return 34;
+        }
+    }
+
+
+    private static class SparkleGlassPane extends JPanel {
+
+        private Rectangle targetBounds;
+        private int frame = 0;
+
+        SparkleGlassPane() {
+            setLayout(null);
+        }
+
+        void setSparkleData(Rectangle bounds, int frame) {
+            this.targetBounds = bounds;
+            this.frame = frame;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            if (targetBounds == null) return;
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            int x = targetBounds.x, y = targetBounds.y,
+                    w = targetBounds.width, h = targetBounds.height;
+
+            for (int i = 0; i < 6; i++) {
+                java.util.Random r = new java.util.Random(i * 7919L);
+                double baseAngle = r.nextDouble() * Math.PI * 2;
+                double speed = 0.05 + r.nextDouble() * 0.05;
+                double angle = baseAngle + frame * speed;
+                double cx = x + w / 2.0 + Math.cos(angle) * (w / 2.0 + 10);
+                double cy = y + h / 2.0 + Math.sin(angle) * (h / 2.0 + 10);
+
+                double pulse = (Math.sin(frame * 0.18 + i) + 1) / 2.0;
+                double outerRadius = 3 + pulse * 4;
+                int alpha = 90 + (int) (pulse * 165);
+
+                g2.setColor(new Color(
+                        Theme.TAIL.getRed(), Theme.TAIL.getGreen(), Theme.TAIL.getBlue(),
+                        Math.min(255, Math.max(0, alpha))));
+                drawStar(g2, cx, cy, outerRadius, angle);
+            }
+            g2.dispose();
+        }
+
+        private void drawStar(Graphics2D g2, double cx, double cy, double outerRadius, double angle) {
+            double innerRadius = outerRadius * 0.45;
+            java.awt.geom.Path2D.Double star = new java.awt.geom.Path2D.Double();
+            for (int i = 0; i < 10; i++) {
+                double radius = (i % 2 == 0) ? outerRadius : innerRadius;
+                double a = angle + (Math.PI * i) / 5 - Math.PI / 2;
+                double px = cx + Math.cos(a) * radius;
+                double py = cy + Math.sin(a) * radius;
+                if (i == 0) star.moveTo(px, py);
+                else star.lineTo(px, py);
+            }
+            star.closePath();
+            g2.fill(star);
         }
     }
 }

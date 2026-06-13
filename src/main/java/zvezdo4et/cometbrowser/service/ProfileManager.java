@@ -25,7 +25,8 @@ public class ProfileManager {
             "#FBBF24", "#F87171", "#38BDF8", "#818CF8"
     };
 
-    private ProfileManager() {}
+    private ProfileManager() {
+    }
 
     public static ProfileManager getInstance() {
         if (instance == null) instance = new ProfileManager();
@@ -34,13 +35,14 @@ public class ProfileManager {
 
     public void initialize() {
         loadFromDisk();
-        if (profiles.isEmpty()) createProfile("Orbit 1");
+        if (profiles.isEmpty()) createProfile("Орбита 1");
     }
 
     private void loadFromDisk() {
         if (!configFile.exists()) return;
         try {
-            List<Map<String, String>> raw = mapper.readValue(configFile, new TypeReference<>() {});
+            List<Map<String, String>> raw = mapper.readValue(configFile, new TypeReference<>() {
+            });
             for (Map<String, String> entry : raw) {
                 BrowserProfile p = new BrowserProfile(
                         entry.get("id"), entry.get("name"),
@@ -86,6 +88,19 @@ public class ProfileManager {
         saveAll();
     }
 
-    public BrowserProfile getProfile(String profileId) { return profiles.get(profileId); }
-    public List<BrowserProfile> getAllProfiles() { return new ArrayList<>(profiles.values()); }
+    public void renameProfile(String profileId, String newName) {
+        BrowserProfile p = profiles.get(profileId);
+        if (p != null && newName != null && !newName.isBlank()) {
+            p.setName(newName.trim());
+            saveAll();
+        }
+    }
+
+    public BrowserProfile getProfile(String profileId) {
+        return profiles.get(profileId);
+    }
+
+    public List<BrowserProfile> getAllProfiles() {
+        return new ArrayList<>(profiles.values());
+    }
 }

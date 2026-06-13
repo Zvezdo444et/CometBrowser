@@ -2,6 +2,7 @@ package zvezdo4et.cometbrowser.controller;
 
 import zvezdo4et.cometbrowser.model.BrowserProfile;
 import zvezdo4et.cometbrowser.model.TabSession;
+import zvezdo4et.cometbrowser.service.BookmarkManager;
 import zvezdo4et.cometbrowser.service.SessionPersistenceService;
 import zvezdo4et.cometbrowser.util.Theme;
 
@@ -21,6 +22,12 @@ public class BrowserPanel extends JPanel {
 
     public static final String HOME_URL = "comet://home";
 
+    private static final String ICON_BACK = "\u2190";  // ←
+    private static final String ICON_FORWARD = "\u2192";  // →
+    private static final String ICON_RELOAD = "\u21BB";  // ↻
+    private static final String ICON_STOP = "\u2715";  // ✕
+    private static final String ICON_HOME = "\u2302";  // ⌂
+
     private final TabSession session;
     private final BrowserProfile profile;
 
@@ -30,6 +37,7 @@ public class BrowserPanel extends JPanel {
     private JButton backBtn;
     private JButton forwardBtn;
     private JButton reloadBtn;
+    private JButton starBtn;
     private JProgressBar progressBar;
 
     private JPanel contentArea;
@@ -55,6 +63,8 @@ public class BrowserPanel extends JPanel {
         String startUrl = session.getUrl();
         if (startUrl == null || startUrl.isBlank() || startUrl.equals(HOME_URL)) {
             showHome();
+        } else {
+            updateStarState();
         }
     }
 
@@ -84,10 +94,10 @@ public class BrowserPanel extends JPanel {
         toolbar.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
         toolbar.setPreferredSize(new Dimension(0, 44));
 
-        backBtn = makeNavBtn("<", "Назад");
-        forwardBtn = makeNavBtn(">", "Вперёд");
-        reloadBtn = makeNavBtn("R", "Обновить");
-        JButton homeBtn = makeNavBtn("H", "Домой");
+        backBtn = makeNavBtn(ICON_BACK, "Назад");
+        forwardBtn = makeNavBtn(ICON_FORWARD, "Вперёд");
+        reloadBtn = makeNavBtn(ICON_RELOAD, "Обновить");
+        JButton homeBtn = makeNavBtn(ICON_HOME, "Домой");
 
         backBtn.setEnabled(false);
         forwardBtn.setEnabled(false);
@@ -121,7 +131,7 @@ public class BrowserPanel extends JPanel {
             }
         };
         addressBar.setOpaque(false);
-        addressBar.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+        addressBar.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 36));
         addressBar.setFont(Theme.FONT_REGULAR);
         addressBar.setForeground(Theme.STARDUST);
         addressBar.setCaretColor(Theme.STARDUST);
@@ -159,8 +169,50 @@ public class BrowserPanel extends JPanel {
         navBtns.add(reloadBtn);
         navBtns.add(homeBtn);
 
+        JLayeredPane addressLayer = new JLayeredPane();
+        addressLayer.setOpaque(false);
+        addressLayer.setPreferredSize(new Dimension(0, 32));
+        addressLayer.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                int w = addressLayer.getWidth();
+                int h = addressLayer.getHeight();
+                addressBar.setBounds(0, 0, w, h);
+                starBtn.setBounds(w - 30, (h - 24) / 2, 24, 24);
+            }
+        });
+
+        starBtn = new JButton("\u2606") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                boolean filled = Boolean.TRUE.equals(getClientProperty("bookmarked"));
+                Color c = filled ? new Color(0xFB, 0xBF, 0x24)
+                        : (getModel().isRollover() ? Theme.STARDUST : Theme.DIM);
+                g2.setColor(c);
+                g2.setFont(Theme.FONT_ICON.deriveFont(15f));
+                String txt = filled ? "\u2605" : "\u2606";
+                FontMetrics fm = g2.getFontMetrics();
+                int tx = (getWidth() - fm.stringWidth(txt)) / 2;
+                int ty = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
+                g2.drawString(txt, tx, ty);
+                g2.dispose();
+            }
+        };
+        starBtn.setBorderPainted(false);
+        starBtn.setContentAreaFilled(false);
+        starBtn.setFocusPainted(false);
+        starBtn.setOpaque(false);
+        starBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        starBtn.setToolTipText("Добавить в закладки");
+        starBtn.addActionListener(e -> toggleBookmark());
+
+        addressLayer.add(addressBar, JLayeredPane.DEFAULT_LAYER);
+        addressLayer.add(starBtn, JLayeredPane.PALETTE_LAYER);
+
         toolbar.add(navBtns, BorderLayout.WEST);
-        toolbar.add(addressBar, BorderLayout.CENTER);
+        toolbar.add(addressLayer, BorderLayout.CENTER);
 
         progressBar = new JProgressBar() {
             @Override
@@ -187,6 +239,8 @@ public class BrowserPanel extends JPanel {
         top.add(progressBar, BorderLayout.SOUTH);
 
         add(top, BorderLayout.NORTH);
+
+        updateStarState();
     }
 
     private JButton makeNavBtn(String text, String tooltip) {
@@ -202,11 +256,12 @@ public class BrowserPanel extends JPanel {
                 g2.setColor(isEnabled()
                         ? (getModel().isRollover() ? Theme.TAIL : Theme.STARDUST)
                         : Theme.DIM);
-                g2.setFont(Theme.FONT_ICON);
+                g2.setFont(Theme.FONT_ICON.deriveFont(16f));
                 FontMetrics fm = g2.getFontMetrics();
-                int tx = (getWidth() - fm.stringWidth(getText())) / 2;
+                String t = getText();
+                int tx = (getWidth() - fm.stringWidth(t)) / 2;
                 int ty = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
-                g2.drawString(getText(), tx, ty);
+                g2.drawString(t, tx, ty);
                 g2.dispose();
             }
         };
@@ -215,9 +270,42 @@ public class BrowserPanel extends JPanel {
         btn.setContentAreaFilled(false);
         btn.setFocusPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.setFont(Theme.FONT_ICON);
+        btn.setFont(Theme.FONT_ICON.deriveFont(16f));
         btn.setToolTipText(tooltip);
         return btn;
+    }
+
+    private void setReloadStopping(boolean stopping) {
+        reloadBtn.putClientProperty("stopping", stopping);
+        reloadBtn.setText(stopping ? ICON_STOP : ICON_RELOAD);
+        reloadBtn.setToolTipText(stopping ? "Остановить" : "Обновить");
+        reloadBtn.repaint();
+    }
+
+    private void updateStarState() {
+        if (starBtn == null) return;
+        String url = session.getUrl();
+        boolean homeOrEmpty = url == null || url.isBlank() || url.equals(HOME_URL);
+        starBtn.setVisible(!homeOrEmpty);
+        if (!homeOrEmpty) {
+            boolean bookmarked = BookmarkManager.getInstance().isBookmarked(url);
+            starBtn.putClientProperty("bookmarked", bookmarked);
+            starBtn.setToolTipText(bookmarked ? "Удалить из закладок" : "Добавить в закладки");
+            starBtn.repaint();
+        }
+    }
+
+    private void toggleBookmark() {
+        String url = session.getUrl();
+        if (url == null || url.isBlank() || url.equals(HOME_URL)) return;
+
+        String name = (title == null || title.isBlank() || title.equals("Новая вкладка")) ? null : title;
+        BookmarkManager.getInstance().toggleBookmark(name, url);
+        updateStarState();
+
+        if (homePanel != null) {
+            homePanel.refreshBookmarks();
+        }
     }
 
     private void showHome() {
@@ -231,10 +319,14 @@ public class BrowserPanel extends JPanel {
 
         if (homePanel == null) {
             homePanel = new HomePanel(query -> navigateTo(query));
+        } else {
+            homePanel.refreshBookmarks();
         }
         contentArea.add(homePanel, BorderLayout.CENTER);
         contentArea.revalidate();
         contentArea.repaint();
+
+        updateStarState();
     }
 
     private void goHome() {
@@ -276,13 +368,13 @@ public class BrowserPanel extends JPanel {
                 session.setUrl(u);
                 SessionPersistenceService.getInstance().updateSession(session);
                 updateNavButtons();
+                updateStarState();
             });
 
             webView.setOnLoadingChanged(isLoading -> {
                 progressBar.setIndeterminate(isLoading);
                 progressBar.setVisible(isLoading);
-                reloadBtn.putClientProperty("stopping", isLoading);
-                reloadBtn.repaint();
+                setReloadStopping(isLoading);
                 if (!isLoading) updateNavButtons();
             });
         } else {
@@ -290,6 +382,7 @@ public class BrowserPanel extends JPanel {
         }
 
         showWebView();
+        updateStarState();
         LOG.info("[BrowserPanel] WebView2 initialized for session=" + session.getId());
     }
 
@@ -329,6 +422,10 @@ public class BrowserPanel extends JPanel {
         } else {
             initWebView(url);
         }
+
+        session.setUrl(url);
+        SessionPersistenceService.getInstance().updateSession(session);
+        updateStarState();
     }
 
     public void setOnTitleChange(Consumer<String> cb) {
