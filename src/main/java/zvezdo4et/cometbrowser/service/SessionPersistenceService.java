@@ -40,6 +40,7 @@ public class SessionPersistenceService {
             List<Map<String, Object>> raw = mapper.readValue(sessionFile, new TypeReference<>() {
             });
             for (Map<String, Object> entry : raw) {
+                int tabOrder = ((Number) entry.getOrDefault("tabOrder", 0)).intValue();
                 TabSession session = new TabSession(
                         (String) entry.get("id"),
                         (String) entry.get("profileId"),
@@ -47,7 +48,8 @@ public class SessionPersistenceService {
                         (String) entry.get("title"),
                         (Boolean) entry.getOrDefault("active", true),
                         (Boolean) entry.getOrDefault("closed", false),
-                        ((Number) entry.getOrDefault("lastAccessedAt", 0L)).longValue()
+                        ((Number) entry.getOrDefault("lastAccessedAt", 0L)).longValue(),
+                        tabOrder
                 );
                 sessions.put(session.getId(), session);
             }
@@ -67,6 +69,7 @@ public class SessionPersistenceService {
             entry.put("active", s.isActive());
             entry.put("closed", s.isClosed());
             entry.put("lastAccessedAt", s.getLastAccessedAt());
+            entry.put("tabOrder", s.getTabOrder());
             raw.add(entry);
         }
         try {
@@ -113,7 +116,10 @@ public class SessionPersistenceService {
     }
 
     public List<TabSession> getActiveSessions() {
-        return sessions.values().stream().filter(s -> !s.isClosed()).collect(Collectors.toList());
+        return sessions.values().stream()
+                .filter(s -> !s.isClosed())
+                .sorted(java.util.Comparator.comparingInt(TabSession::getTabOrder))
+                .collect(Collectors.toList());
     }
 
     public List<TabSession> getClosedSessions() {

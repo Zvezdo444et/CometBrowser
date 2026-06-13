@@ -22,11 +22,11 @@ public class BrowserPanel extends JPanel {
 
     public static final String HOME_URL = "comet://home";
 
-    private static final String ICON_BACK = "\u2190";  // ←
-    private static final String ICON_FORWARD = "\u2192";  // →
-    private static final String ICON_RELOAD = "\u21BB";  // ↻
-    private static final String ICON_STOP = "\u2715";  // ✕
-    private static final String ICON_HOME = "\u2302";  // ⌂
+    private static final String ICON_BACK = "\u2190";
+    private static final String ICON_FORWARD = "\u2192";
+    private static final String ICON_RELOAD = "\u21BB";
+    private static final String ICON_STOP = "\u2715";
+    private static final String ICON_HOME = "\u2302";
 
     private final TabSession session;
     private final BrowserProfile profile;
@@ -129,12 +129,18 @@ public class BrowserPanel extends JPanel {
                 g2.dispose();
                 super.paintComponent(g);
             }
+
+            @Override
+            public Cursor getCursor() {
+                return Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR);
+            }
         };
         addressBar.setOpaque(false);
         addressBar.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 36));
         addressBar.setFont(Theme.FONT_REGULAR);
         addressBar.setForeground(Theme.STARDUST);
         addressBar.setCaretColor(Theme.STARDUST);
+        addressBar.setCursor(Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR));
         addressBar.setPreferredSize(new Dimension(0, 32));
 
         String displayUrl = session.getUrl();
@@ -158,6 +164,8 @@ public class BrowserPanel extends JPanel {
 
             @Override
             public void focusLost(FocusEvent e) {
+                addressBar.setSelectionStart(0);
+                addressBar.setSelectionEnd(0);
                 addressBar.repaint();
             }
         });
@@ -315,6 +323,10 @@ public class BrowserPanel extends JPanel {
         if (onTitleChange != null) onTitleChange.accept(title);
         SessionPersistenceService.getInstance().updateSession(session);
 
+        if (webView != null) {
+            webView.setVisible(false);
+        }
+
         contentArea.removeAll();
 
         if (homePanel == null) {
@@ -327,6 +339,9 @@ public class BrowserPanel extends JPanel {
         contentArea.repaint();
 
         updateStarState();
+
+        backBtn.setEnabled(false);
+        forwardBtn.setEnabled(false);
     }
 
     private void goHome() {
@@ -339,6 +354,7 @@ public class BrowserPanel extends JPanel {
     private void showWebView() {
         contentArea.removeAll();
         if (webView != null) {
+            webView.setVisible(true);
             contentArea.add(webView, BorderLayout.CENTER);
         }
         contentArea.revalidate();

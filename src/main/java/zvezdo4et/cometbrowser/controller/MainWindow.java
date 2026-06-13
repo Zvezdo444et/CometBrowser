@@ -9,12 +9,10 @@ import zvezdo4et.cometbrowser.util.Theme;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
+import java.awt.event.*;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +22,9 @@ public class MainWindow extends JFrame {
 
     private static final Logger LOG = Logger.getLogger(MainWindow.class.getName());
 
-    private static final String ICON_CLOSE_TAB = "\u2715"; // ✕
+    private static final String ICON_CLOSE_TAB = "\u2715";
+
+    private static final Color DRAG_HIGHLIGHT = new Color(0x7C, 0x1F, 0x4A);
 
     private JPanel titleBar;
     private JPanel profileBar;
@@ -51,7 +51,7 @@ public class MainWindow extends JFrame {
         setUndecorated(true);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(1280, 800);
-        setMinimumSize(new Dimension(800, 500));
+        setMinimumSize(new Dimension(400, 350));
         setLocationRelativeTo(null);
         getContentPane().setBackground(Theme.VOID);
 
@@ -108,7 +108,7 @@ public class MainWindow extends JFrame {
                 if (e.getClickCount() == 2) toggleMaximize();
             }
         });
-        titleBar.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+        titleBar.addMouseMotionListener(new MouseMotionAdapter() {
             @Override
             public void mouseDragged(MouseEvent e) {
                 if (dragOffset == null) return;
@@ -153,13 +153,13 @@ public class MainWindow extends JFrame {
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         controls.setOpaque(false);
 
-        JButton minBtn = makeWindowButton("\u2212", false);   // −
+        JButton minBtn = makeWindowButton("\u2212", false);
         minBtn.addActionListener(e -> setExtendedState(JFrame.ICONIFIED));
 
-        maximizeBtn = makeWindowButton("\u25A1", false);       // □
+        maximizeBtn = makeWindowButton("\u25A1", false);
         maximizeBtn.addActionListener(e -> toggleMaximize());
 
-        JButton closeBtn = makeWindowButton("\u2715", true);   // ✕
+        JButton closeBtn = makeWindowButton("\u2715", true);
         closeBtn.addActionListener(e -> onExit());
 
         controls.add(minBtn);
@@ -190,7 +190,7 @@ public class MainWindow extends JFrame {
         btn.setPreferredSize(new Dimension(46, 44));
         btn.setBorderPainted(false);
         btn.setContentAreaFilled(false);
-        btn.setFocusPainted(false);
+        btn.setFocusable(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return btn;
     }
@@ -217,13 +217,13 @@ public class MainWindow extends JFrame {
 
         setBounds(x, y, w, h);
         isMaximized = true;
-        maximizeBtn.setText("\u2750");  // ❐
+        maximizeBtn.setText("\u2750");
     }
 
     private void restoreFromMaximize() {
         if (normalBounds != null) setBounds(normalBounds);
         isMaximized = false;
-        maximizeBtn.setText("\u25A1");  // □
+        maximizeBtn.setText("\u25A1");
     }
 
     private static class ProfileTabs {
@@ -245,11 +245,30 @@ public class MainWindow extends JFrame {
     }
 
     private JLabel makePlusTabHeader(ProfileTabs pt) {
-        JLabel lbl = new JLabel("+");
+        JLabel lbl = new JLabel("+") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getForeground());
+                g2.setFont(getFont());
+                FontMetrics fm = g2.getFontMetrics();
+                int tx = (getWidth() - fm.stringWidth(getText())) / 2;
+                int ty = (getHeight() + fm.getAscent() - fm.getDescent()) / 2 - 2;
+                g2.drawString(getText(), tx, ty);
+                g2.dispose();
+            }
+        };
         lbl.setFont(Theme.FONT_ICON.deriveFont(Font.BOLD, 14f));
         lbl.setForeground(Theme.DIM);
-        lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        lbl.addMouseListener(new MouseAdapter() {
+        lbl.setCursor(Cursor.getDefaultCursor());
+        lbl.setPreferredSize(new Dimension(33, 34));
+
+        if (pt.pane.getUI() instanceof CometTabbedPaneUI ui) {
+            ui.attachHoverListener(lbl, () -> pt.pane.indexOfComponent(pt.plusPanel));
+        }
+
+        MouseAdapter ma = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 openNewTab(pt);
@@ -264,7 +283,8 @@ public class MainWindow extends JFrame {
             public void mouseExited(MouseEvent e) {
                 lbl.setForeground(Theme.DIM);
             }
-        });
+        };
+        lbl.addMouseListener(ma);
         return lbl;
     }
 
@@ -287,24 +307,208 @@ public class MainWindow extends JFrame {
 
         profileBar.revalidate();
         profileBar.repaint();
+
+        installProfileDragSupport();
+    }
+
+    private void installProfileDragSupport() {
+        for (Component c : profileBar.getComponents()) {
+            if (!(c instanceof JPanel profileBtn)) continue;
+            Object pid = profileBtn.getClientProperty("profileId");
+            if (pid == null) continue;
+
+            MouseAdapter dragAdapter = new MouseAdapter() {
+                private Point pressPoint;
+                private boolean dragging = false;
+
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    if (SwingUtilities.getDeepestComponentAt(
+                            profileBtn,
+                            SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), profileBtn).x,
+                            SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), profileBtn).y
+                    ) instanceof JButton) return;
+
+                    pressPoint = SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), profileBar);
+                    dragging = false;
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    if (pressPoint == null) return;
+                    Point p = SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), profileBar);
+                    if (!dragging && Math.abs(p.x - pressPoint.x) > 6) {
+                        dragging = true;
+                    }
+                    if (dragging) {
+                        profileBtn.putClientProperty("dragging", true);
+                        int insertIdx = getProfileInsertIndex(p.x);
+                        int currentIdx = getProfileComponentIndex(profileBtn);
+                        Component[] comps = profileBar.getComponents();
+                        int addBtnIdx = comps.length - 1;
+                        if (insertIdx > addBtnIdx) insertIdx = addBtnIdx;
+                        if (insertIdx >= 0 && insertIdx != currentIdx && insertIdx != currentIdx + 1) {
+                            profileBar.remove(profileBtn);
+                            int target = insertIdx > currentIdx ? insertIdx - 1 : insertIdx;
+                            if (target >= addBtnIdx) target = addBtnIdx - 1;
+                            profileBar.add(profileBtn, target);
+                            profileBar.revalidate();
+                            profileBar.repaint();
+                        } else {
+                            profileBar.repaint();
+                        }
+                    }
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (dragging) {
+                        profileBtn.putClientProperty("dragging", false);
+                        profileBar.repaint();
+                        saveProfileOrder();
+                    } else {
+                        Point pInBtn = SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), profileBtn);
+                        Component deepest = SwingUtilities.getDeepestComponentAt(profileBtn, pInBtn.x, pInBtn.y);
+                        if (deepest instanceof JButton) {
+                            dragging = false;
+                            pressPoint = null;
+                            return;
+                        }
+                        if (SwingUtilities.isLeftMouseButton(e)) {
+                            String profileId = (String) profileBtn.getClientProperty("profileId");
+                            if (profileId != null && !profileId.equals(selectedProfileId)) {
+                                selectedProfileId = profileId;
+                                markProfileSelected(selectedProfileId);
+                                switchToProfile(selectedProfileId);
+                            }
+                        }
+                    }
+                    dragging = false;
+                    pressPoint = null;
+                }
+
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    if (dragging) return;
+                    Point pInBtn = SwingUtilities.convertPoint((Component) e.getSource(), e.getPoint(), profileBtn);
+                    Component deepest = SwingUtilities.getDeepestComponentAt(profileBtn, pInBtn.x, pInBtn.y);
+                    if (deepest instanceof JButton) return;
+
+                    if (e.getClickCount() >= 2) {
+                        String profileId = (String) profileBtn.getClientProperty("profileId");
+                        if (profileId != null) {
+                            BrowserProfile profile = ProfileManager.getInstance().getProfile(profileId);
+                            if (profile != null) showRenameProfileDialog(profile);
+                        }
+                    }
+                }
+
+                private int getProfileComponentIndex(Component comp) {
+                    Component[] comps = profileBar.getComponents();
+                    for (int i = 0; i < comps.length; i++) {
+                        if (comps[i] == comp) return i;
+                    }
+                    return -1;
+                }
+
+                private int getProfileInsertIndex(int x) {
+                    Component[] comps = profileBar.getComponents();
+                    for (int i = 0; i < comps.length; i++) {
+                        Rectangle b = comps[i].getBounds();
+                        if (x < b.x + b.width / 2) return i;
+                    }
+                    return comps.length;
+                }
+            };
+
+            attachDragListenerRecursively(profileBtn, dragAdapter, profileBtn);
+        }
+    }
+
+    private void attachDragListenerRecursively(Component c, MouseAdapter adapter, JPanel profileBtn) {
+        if (c instanceof JButton) return;
+        c.addMouseListener(adapter);
+        c.addMouseMotionListener(adapter);
+        if (c instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                attachDragListenerRecursively(child, adapter, profileBtn);
+            }
+        }
+    }
+
+    private void saveProfileOrder() {
+        List<String> orderedIds = new ArrayList<>();
+        for (Component c : profileBar.getComponents()) {
+            if (c instanceof JPanel panel) {
+                Object pid = panel.getClientProperty("profileId");
+                if (pid instanceof String id) orderedIds.add(id);
+            }
+        }
+        if (!orderedIds.isEmpty()) {
+            ProfileManager.getInstance().reorderProfiles(orderedIds);
+        }
     }
 
     private JPanel buildProfileButton(BrowserProfile profile) {
         JPanel btn = new JPanel(new BorderLayout(4, 0)) {
             boolean hovered = false;
 
+            {
+                addMouseListener(new MouseAdapter() {
+                    @Override
+                    public void mouseEntered(MouseEvent e) {
+                        hovered = true;
+                        repaint();
+                    }
+
+                    @Override
+                    public void mouseExited(MouseEvent e) {
+                        Point p = e.getPoint();
+                        SwingUtilities.convertPointToScreen(p, (Component) e.getSource());
+                        try {
+                            Point loc = getLocationOnScreen();
+                            Rectangle bounds = new Rectangle(loc.x, loc.y, getWidth(), getHeight());
+                            if (!bounds.contains(p)) {
+                                hovered = false;
+                                repaint();
+                            }
+                        } catch (IllegalComponentStateException ex) {
+                            hovered = false;
+                        }
+                    }
+                });
+            }
+
             @Override
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                Color bg = profile.getId().equals(selectedProfileId) ? Theme.ACTIVE_BG
-                        : hovered ? Theme.CRATER : Theme.NEBULA;
+
+                boolean isDragging = Boolean.TRUE.equals(getClientProperty("dragging"));
+
+                Color bg;
+                if (isDragging) {
+                    bg = DRAG_HIGHLIGHT;
+                } else if (profile.getId().equals(selectedProfileId)) {
+                    bg = Theme.ACTIVE_BG;
+                } else if (hovered) {
+                    bg = Theme.CRATER;
+                } else {
+                    bg = Theme.NEBULA;
+                }
+
                 g2.setColor(bg);
                 g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 8, 8));
-                if (profile.getId().equals(selectedProfileId)) {
+
+                if (isDragging) {
+                    g2.setColor(new Color(0xC0, 0x40, 0x80));
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 8, 8));
+                } else if (profile.getId().equals(selectedProfileId)) {
                     g2.setColor(Theme.COMET);
                     g2.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 8, 8));
                 }
+
                 g2.dispose();
             }
         };
@@ -344,6 +548,7 @@ public class MainWindow extends JFrame {
         deleteBtn.setBorderPainted(false);
         deleteBtn.setContentAreaFilled(false);
         deleteBtn.setFocusPainted(false);
+        deleteBtn.setFocusable(false);
         deleteBtn.setVisible(false);
         deleteBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         deleteBtn.addActionListener(e -> deleteProfile(profile));
@@ -356,36 +561,7 @@ public class MainWindow extends JFrame {
         btn.add(left, BorderLayout.CENTER);
         btn.add(deleteBtn, BorderLayout.EAST);
 
-        nameLbl.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() >= 2) {
-                    showRenameProfileDialog(profile);
-                    return;
-                }
-                if (!profile.getId().equals(selectedProfileId)) {
-                    selectedProfileId = profile.getId();
-                    markProfileSelected(selectedProfileId);
-                    switchToProfile(selectedProfileId);
-                }
-            }
-        });
-
-        btn.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getSource() == deleteBtn) return;
-                if (e.getClickCount() >= 2) {
-                    showRenameProfileDialog(profile);
-                    return;
-                }
-                if (!profile.getId().equals(selectedProfileId)) {
-                    selectedProfileId = profile.getId();
-                    markProfileSelected(selectedProfileId);
-                    switchToProfile(selectedProfileId);
-                }
-            }
-
+        MouseAdapter hoverListener = new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
                 deleteBtn.setVisible(true);
@@ -396,14 +572,24 @@ public class MainWindow extends JFrame {
             public void mouseExited(MouseEvent e) {
                 Point p = e.getPoint();
                 SwingUtilities.convertPointToScreen(p, (Component) e.getSource());
-                Point loc = btn.getLocationOnScreen();
-                Rectangle bounds = new Rectangle(loc.x, loc.y, btn.getWidth(), btn.getHeight());
-                if (!bounds.contains(p)) {
+                try {
+                    Point loc = btn.getLocationOnScreen();
+                    Rectangle bounds = new Rectangle(loc.x, loc.y, btn.getWidth(), btn.getHeight());
+                    if (!bounds.contains(p)) {
+                        deleteBtn.setVisible(false);
+                        btn.repaint();
+                    }
+                } catch (IllegalComponentStateException ex) {
                     deleteBtn.setVisible(false);
-                    btn.repaint();
                 }
             }
-        });
+        };
+
+        btn.addMouseListener(hoverListener);
+        left.addMouseListener(hoverListener);
+        dot.addMouseListener(hoverListener);
+        nameLbl.addMouseListener(hoverListener);
+        deleteBtn.addMouseListener(hoverListener);
 
         btn.putClientProperty("profileId", profile.getId());
         return btn;
@@ -447,6 +633,7 @@ public class MainWindow extends JFrame {
         btn.setBorderPainted(false);
         btn.setContentAreaFilled(false);
         btn.setFocusPainted(false);
+        btn.setFocusable(false);
         btn.setFont(Theme.FONT_REGULAR);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return btn;
@@ -476,11 +663,13 @@ public class MainWindow extends JFrame {
         pane.setForeground(Theme.STARDUST);
         pane.setFont(Theme.FONT_REGULAR);
         pane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        pane.setUI(new CometTabbedPaneUI());
+        pane.setFocusable(false);
+        CometTabbedPaneUI cometUI = new CometTabbedPaneUI();
+        pane.setUI(cometUI);
 
         JPanel plusPanel = new JPanel();
         plusPanel.setBackground(Theme.VOID);
-
+        cometUI.setPlusPanelRef(plusPanel);
         ProfileTabs pt = new ProfileTabs(pane, plusPanel);
 
         pane.addChangeListener(e -> {
@@ -498,6 +687,18 @@ public class MainWindow extends JFrame {
         profileTabs.put(profileId, pt);
         profileCards.add(pane, profileId);
 
+        installTabDragSupport(pt);
+
+        pane.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                int idx = pane.indexAtLocation(e.getX(), e.getY());
+                if (idx >= 0 && pane.getComponentAt(idx) == pt.plusPanel) {
+                    openNewTab(pt);
+                }
+            }
+        });
+
         boolean any = false;
         for (TabSession session : SessionPersistenceService.getInstance().getActiveSessions()) {
             if (!profileId.equals(session.getProfileId())) continue;
@@ -506,6 +707,94 @@ public class MainWindow extends JFrame {
         }
 
         if (!any) openNewTab(pt);
+    }
+
+    private void saveTabOrder(ProfileTabs pt) {
+        int plusIdx = pt.pane.indexOfComponent(pt.plusPanel);
+        for (int i = 0; i < pt.pane.getTabCount(); i++) {
+            if (i == plusIdx) continue;
+            Component comp = pt.pane.getComponentAt(i);
+            if (comp instanceof BrowserPanel bp) {
+                bp.getSession().setTabOrder(i);
+                SessionPersistenceService.getInstance().updateSession(bp.getSession());
+            }
+        }
+    }
+
+    private void installTabDragSupport(ProfileTabs pt) {
+        JTabbedPane pane = pt.pane;
+
+        MouseAdapter dragAdapter = new MouseAdapter() {
+            private int dragSourceIdx = -1;
+            private boolean dragging = false;
+            private Point pressPoint;
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+                dragSourceIdx = pane.indexAtLocation(e.getX(), e.getY());
+                pressPoint = e.getPoint();
+                dragging = false;
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                if (dragSourceIdx < 0) return;
+                if (pressPoint != null && !dragging) {
+                    int dx = Math.abs(e.getX() - pressPoint.x);
+                    if (dx > 8) dragging = true;
+                }
+                if (!dragging) return;
+
+                int plusIdx = pane.indexOfComponent(pt.plusPanel);
+                if (dragSourceIdx == plusIdx) return;
+
+                if (pane.getUI() instanceof CometTabbedPaneUI ui) {
+                    ui.setDraggingTabIndex(dragSourceIdx);
+                }
+
+                int targetIdx = pane.indexAtLocation(e.getX(), e.getY());
+                if (targetIdx < 0 || targetIdx == dragSourceIdx || targetIdx == plusIdx) return;
+
+                pt.ignoreChangeEvent = true;
+                moveTab(pane, dragSourceIdx, targetIdx);
+                dragSourceIdx = targetIdx;
+                pt.ignoreChangeEvent = false;
+                pane.setSelectedIndex(dragSourceIdx);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (dragging) {
+                    if (pane.getUI() instanceof CometTabbedPaneUI ui) {
+                        ui.setDraggingTabIndex(-1);
+                    }
+                    saveTabOrder(pt);
+                }
+                dragSourceIdx = -1;
+                dragging = false;
+                pressPoint = null;
+            }
+
+            private void moveTab(JTabbedPane pane, int from, int to) {
+                String title = pane.getTitleAt(from);
+                Component comp = pane.getComponentAt(from);
+                Component tabComp = pane.getTabComponentAt(from);
+                String tip = pane.getToolTipTextAt(from);
+                Icon icon = pane.getIconAt(from);
+                boolean enabled = pane.isEnabledAt(from);
+
+                pane.removeTabAt(from);
+
+                int insertAt = (to > from) ? to - 1 : to;
+
+                pane.insertTab(title, icon, comp, tip, insertAt);
+                pane.setTabComponentAt(insertAt, tabComp);
+                pane.setEnabledAt(insertAt, enabled);
+            }
+        };
+
+        pane.addMouseListener(dragAdapter);
+        pane.addMouseMotionListener(dragAdapter);
     }
 
     private void switchToProfile(String profileId) {
@@ -570,6 +859,7 @@ public class MainWindow extends JFrame {
         panel.setOnTitleChange(t -> SwingUtilities.invokeLater(() -> {
             int idx = pt.pane.indexOfComponent(panel);
             if (idx >= 0) {
+                Component oldComp = pt.pane.getTabComponentAt(idx);
                 pt.pane.setTabComponentAt(idx, buildTabHeader(pt, session, profile));
                 pt.pane.revalidate();
             }
@@ -624,6 +914,7 @@ public class MainWindow extends JFrame {
         closeBtn.setBorderPainted(false);
         closeBtn.setContentAreaFilled(false);
         closeBtn.setFocusPainted(false);
+        closeBtn.setFocusable(false);
         closeBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         closeBtn.addActionListener(e -> {
             BrowserPanel panel = tabPanels.get(session.getId());
@@ -641,6 +932,7 @@ public class MainWindow extends JFrame {
         MouseAdapter selectTabListener = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                if (e.getSource() == closeBtn) return;
                 int idx = pt.pane.indexOfTabComponent(header);
                 if (idx >= 0) pt.pane.setSelectedIndex(idx);
             }
@@ -696,31 +988,33 @@ public class MainWindow extends JFrame {
             pt.ignoreChangeEvent = false;
         }
 
+        saveTabOrder(pt);
         setStatus("Вкладка закрыта.");
     }
 
     private void showAddProfileDialog() {
-        JTextField field = new JTextField(20);
-        field.setFont(Theme.FONT_REGULAR);
-        field.setBackground(Theme.CRATER);
-        field.setForeground(Theme.STARDUST);
-        field.setCaretColor(Theme.STARDUST);
-        field.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Theme.BORDER),
-                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        JDialog dialog = createStyledDialog("Новая орбита");
+        JTextField field = buildStyledField("");
 
-        JPanel panel = new JPanel(new BorderLayout(0, 8));
-        panel.setBackground(Theme.NEBULA);
-        panel.setBorder(new EmptyBorder(12, 12, 12, 12));
-        JLabel lbl = new JLabel("Название орбиты:");
-        lbl.setFont(Theme.FONT_REGULAR);
-        lbl.setForeground(Theme.STARDUST);
-        panel.add(lbl, BorderLayout.NORTH);
-        panel.add(field, BorderLayout.CENTER);
+        JPanel content = new JPanel();
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setOpaque(false);
+        content.setBorder(new EmptyBorder(16, 24, 8, 24));
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Новая орбита",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result == JOptionPane.OK_OPTION) {
+        JLabel lbl = new JLabel("Название орбиты");
+        lbl.setForeground(Theme.DIM);
+        lbl.setFont(Theme.FONT_SMALL);
+        lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(lbl);
+        content.add(Box.createVerticalStrut(6));
+        field.setAlignmentX(Component.LEFT_ALIGNMENT);
+        field.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        content.add(field);
+
+        JButton addBtn = buildDialogButton("Создать", true);
+        JButton cancelBtn = buildDialogButton("Отмена", false);
+
+        addBtn.addActionListener(e -> {
             String name = field.getText().trim();
             if (!name.isBlank()) {
                 BrowserProfile profile = ProfileManager.getInstance().createProfile(name);
@@ -729,39 +1023,195 @@ public class MainWindow extends JFrame {
                 markProfileSelected(selectedProfileId);
                 switchToProfile(selectedProfileId);
             }
-        }
+            dialog.dispose();
+        });
+        cancelBtn.addActionListener(e -> dialog.dispose());
+        field.addActionListener(e -> addBtn.doClick());
+
+        showStyledDialog(dialog, content, new JButton[]{addBtn, cancelBtn});
     }
 
     private void showRenameProfileDialog(BrowserProfile profile) {
-        JTextField field = new JTextField(20);
-        field.setFont(Theme.FONT_REGULAR);
-        field.setBackground(Theme.CRATER);
-        field.setForeground(Theme.STARDUST);
-        field.setCaretColor(Theme.STARDUST);
-        field.setText(profile.getName());
-        field.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Theme.BORDER),
-                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        JDialog dialog = createStyledDialog("Переименовать орбиту");
+        JTextField field = buildStyledField(profile.getName());
 
-        JPanel panel = new JPanel(new BorderLayout(0, 8));
-        panel.setBackground(Theme.NEBULA);
-        panel.setBorder(new EmptyBorder(12, 12, 12, 12));
-        JLabel lbl = new JLabel("Новое название орбиты:");
-        lbl.setFont(Theme.FONT_REGULAR);
-        lbl.setForeground(Theme.STARDUST);
-        panel.add(lbl, BorderLayout.NORTH);
-        panel.add(field, BorderLayout.CENTER);
+        JPanel content = new JPanel();
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setOpaque(false);
+        content.setBorder(new EmptyBorder(16, 24, 8, 24));
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Переименовать орбиту",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result == JOptionPane.OK_OPTION) {
+        JLabel lbl = new JLabel("Новое название");
+        lbl.setForeground(Theme.DIM);
+        lbl.setFont(Theme.FONT_SMALL);
+        lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(lbl);
+        content.add(Box.createVerticalStrut(6));
+        field.setAlignmentX(Component.LEFT_ALIGNMENT);
+        field.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        content.add(field);
+
+        JButton saveBtn = buildDialogButton("Сохранить", true);
+        JButton cancelBtn = buildDialogButton("Отмена", false);
+
+        saveBtn.addActionListener(e -> {
             String name = field.getText().trim();
             if (!name.isBlank() && !name.equals(profile.getName())) {
                 ProfileManager.getInstance().renameProfile(profile.getId(), name);
                 buildProfileBar();
                 setStatus("Орбита переименована в «" + name + "».");
             }
+            dialog.dispose();
+        });
+        cancelBtn.addActionListener(e -> dialog.dispose());
+        field.addActionListener(e -> saveBtn.doClick());
+
+        showStyledDialog(dialog, content, new JButton[]{saveBtn, cancelBtn});
+    }
+
+    private JDialog createStyledDialog(String title) {
+        JDialog dialog = new JDialog(this, title, true);
+        dialog.setUndecorated(true);
+        dialog.setBackground(new Color(0, 0, 0, 0));
+        return dialog;
+    }
+
+    private JTextField buildStyledField(String initialText) {
+        JTextField field = new JTextField(initialText) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(hasFocus() ? Theme.NEBULA : Theme.CRATER);
+                g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 8, 8));
+                g2.setColor(hasFocus() ? Theme.COMET : Theme.BORDER);
+                g2.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 8, 8));
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        field.setOpaque(false);
+        field.setFont(Theme.FONT_REGULAR);
+        field.setForeground(Theme.STARDUST);
+        field.setCaretColor(Theme.COMET);
+        field.setCursor(Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR));
+        field.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+        field.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                field.repaint();
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+                field.setSelectionStart(0);
+                field.setSelectionEnd(0);
+                field.repaint();
+            }
+        });
+        return field;
+    }
+
+    private JButton buildDialogButton(String text, boolean primary) {
+        JButton btn = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                Color bg = primary
+                        ? (getModel().isRollover() ? Theme.TAIL : Theme.COMET)
+                        : (getModel().isRollover() ? Theme.CRATER : Theme.NEBULA);
+                g2.setColor(bg);
+                g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 8, 8));
+                if (!primary) {
+                    g2.setColor(Theme.BORDER);
+                    g2.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 8, 8));
+                }
+                g2.setColor(primary ? Color.WHITE : Theme.STARDUST);
+                g2.setFont(Theme.FONT_REGULAR);
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString(getText(),
+                        (getWidth() - fm.stringWidth(getText())) / 2,
+                        (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+                g2.dispose();
+            }
+        };
+        btn.setBorderPainted(false);
+        btn.setContentAreaFilled(false);
+        btn.setFocusPainted(false);
+        btn.setFocusable(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setPreferredSize(new Dimension(primary ? 110 : 90, 36));
+        btn.setFont(Theme.FONT_REGULAR);
+        return btn;
+    }
+
+    private void showStyledDialog(JDialog dialog, JPanel content, JButton[] buttons) {
+        JPanel root = new JPanel(new BorderLayout()) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(Theme.NEBULA);
+                g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 16, 16));
+                g2.setColor(Theme.BORDER);
+                g2.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 16, 16));
+                g2.dispose();
+            }
+        };
+        root.setOpaque(false);
+
+        JLabel titleLbl = new JLabel(dialog.getTitle());
+        titleLbl.setFont(Theme.FONT_BOLD.deriveFont(14f));
+        titleLbl.setForeground(Theme.STARDUST);
+        titleLbl.setBorder(new EmptyBorder(16, 24, 0, 24));
+
+        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 12));
+        btnRow.setOpaque(false);
+        btnRow.setBorder(new EmptyBorder(0, 24, 8, 24));
+        for (JButton b : buttons) btnRow.add(b);
+
+        root.add(titleLbl, BorderLayout.NORTH);
+        root.add(content, BorderLayout.CENTER);
+        root.add(btnRow, BorderLayout.SOUTH);
+
+        dialog.setContentPane(root);
+        dialog.pack();
+        dialog.setMinimumSize(new Dimension(320, dialog.getHeight()));
+
+        Point ownerLoc = getLocation();
+        Dimension ownerSize = getSize();
+        Dimension dlgSize = dialog.getSize();
+        dialog.setLocation(
+                ownerLoc.x + (ownerSize.width - dlgSize.width) / 2,
+                ownerLoc.y + (ownerSize.height - dlgSize.height) / 2
+        );
+
+        dialog.getRootPane().registerKeyboardAction(
+                e -> dialog.dispose(),
+                KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+                JComponent.WHEN_IN_FOCUSED_WINDOW
+        );
+
+        SwingUtilities.invokeLater(() -> {
+            Component first = findFirstTextField(root);
+            if (first != null) {
+                first.requestFocusInWindow();
+                if (first instanceof JTextField f) f.selectAll();
+            }
+        });
+
+        dialog.setVisible(true);
+    }
+
+    private Component findFirstTextField(Container container) {
+        for (Component c : container.getComponents()) {
+            if (c instanceof JTextField) return c;
+            if (c instanceof Container sub) {
+                Component found = findFirstTextField(sub);
+                if (found != null) return found;
+            }
         }
+        return null;
     }
 
     private void setStatus(String text) {
@@ -770,6 +1220,9 @@ public class MainWindow extends JFrame {
     }
 
     private void onExit() {
+        for (Map.Entry<String, ProfileTabs> entry : profileTabs.entrySet()) {
+            saveTabOrder(entry.getValue());
+        }
         for (BrowserPanel p : tabPanels.values()) p.dispose();
         SessionPersistenceService.getInstance().saveAll();
         ProfileManager.getInstance().saveAll();
@@ -783,8 +1236,19 @@ public class MainWindow extends JFrame {
         private static final int MAX_TAB_WIDTH = 200;
 
         private int hoveredTabIndex = -1;
+        private int draggingTabIndex = -1;
         private Timer sparkleTimer;
         private int sparkleFrame = 0;
+        private Component plusPanelRef;
+
+        void setPlusPanelRef(Component c) {
+            this.plusPanelRef = c;
+        }
+
+        void setDraggingTabIndex(int idx) {
+            this.draggingTabIndex = idx;
+            if (tabPane != null) tabPane.repaint();
+        }
 
         @Override
         protected void installDefaults() {
@@ -799,13 +1263,40 @@ public class MainWindow extends JFrame {
         }
 
         @Override
+        protected Insets getTabInsets(int tabPlacement, int tabIndex) {
+            if (plusPanelRef != null && tabPane != null
+                    && tabIndex >= 0 && tabIndex < tabPane.getTabCount()
+                    && tabPane.getComponentAt(tabIndex) == plusPanelRef) {
+                return new Insets(2, 0, 2, 0);
+            }
+            return new Insets(2, 8, 2, 8);
+        }
+
+        @Override
+        protected Insets getSelectedTabPadInsets(int tabPlacement) {
+            return new Insets(0, 0, 0, 0);
+        }
+
+        @Override
+        protected Insets getTabAreaInsets(int tabPlacement) {
+            return new Insets(4, 4, 0, 4);
+        }
+
+        @Override
         protected void installListeners() {
             super.installListeners();
 
-            tabPane.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            tabPane.addMouseMotionListener(new MouseMotionAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
-                    updateHover(tabForCoordinate(tabPane, e.getX(), e.getY()));
+                    int idx = tabForCoordinate(tabPane, e.getX(), e.getY());
+                    if (idx >= 0) {
+                        updateHover(idx);
+                        tabPane.setCursor(Cursor.getDefaultCursor());
+                    } else {
+                        updateHover(-1);
+                        tabPane.setCursor(Cursor.getDefaultCursor());
+                    }
                 }
             });
 
@@ -813,6 +1304,7 @@ public class MainWindow extends JFrame {
                 @Override
                 public void mouseExited(MouseEvent e) {
                     updateHover(-1);
+                    tabPane.setCursor(Cursor.getDefaultCursor());
                 }
             });
         }
@@ -822,18 +1314,19 @@ public class MainWindow extends JFrame {
         private void updateHover(int idx) {
             if (idx == -1) {
                 if (hoveredTabIndex == -1) return;
-                final long ver = hoverVersion;
-                SwingUtilities.invokeLater(() -> {
-                    if (hoverVersion != ver) return;
-                    applyHover(-1);
+                final long ver = ++hoverVersion;
+                Timer t = new Timer(30, e -> {
+                    if (hoverVersion == ver) applyHover(-1);
                 });
+                t.setRepeats(false);
+                t.start();
             } else {
                 hoverVersion++;
                 applyHover(idx);
             }
         }
 
-        private void applyHover(int idx) {
+        void applyHover(int idx) {
             if (idx == hoveredTabIndex) return;
             hoveredTabIndex = idx;
             if (hoveredTabIndex >= 0) {
@@ -850,31 +1343,39 @@ public class MainWindow extends JFrame {
         }
 
         void attachHoverListener(Component header, java.util.function.IntSupplier indexSupplier) {
-            java.awt.event.MouseAdapter listener = new java.awt.event.MouseAdapter() {
+            MouseAdapter listener = new MouseAdapter() {
                 @Override
                 public void mouseEntered(MouseEvent e) {
-                    updateHover(indexSupplier.getAsInt());
+                    int idx = indexSupplier.getAsInt();
+                    if (idx >= 0) updateHover(idx);
                 }
 
                 @Override
                 public void mouseMoved(MouseEvent e) {
-                    updateHover(indexSupplier.getAsInt());
+                    int idx = indexSupplier.getAsInt();
+                    if (idx >= 0) updateHover(idx);
                 }
 
                 @Override
                 public void mouseExited(MouseEvent e) {
                     Point p = e.getPoint();
                     SwingUtilities.convertPointToScreen(p, e.getComponent());
-                    Rectangle bounds = header.getBounds();
-                    Point headerLoc = header.getLocationOnScreen();
-                    Rectangle screen = new Rectangle(headerLoc.x, headerLoc.y, bounds.width, bounds.height);
-                    if (!screen.contains(p)) updateHover(-1);
+
+                    Component root = header;
+                    try {
+                        Rectangle screen = new Rectangle(root.getLocationOnScreen().x,
+                                root.getLocationOnScreen().y,
+                                root.getWidth(), root.getHeight());
+                        if (!screen.contains(p)) updateHover(-1);
+                    } catch (IllegalComponentStateException ex) {
+                        updateHover(-1);
+                    }
                 }
             };
             attachRecursively(header, listener);
         }
 
-        private void attachRecursively(Component c, java.awt.event.MouseAdapter listener) {
+        private void attachRecursively(Component c, MouseAdapter listener) {
             c.addMouseListener(listener);
             c.addMouseMotionListener(listener);
             if (c instanceof Container container)
@@ -930,15 +1431,32 @@ public class MainWindow extends JFrame {
                                           int x, int y, int w, int h, boolean isSelected) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Color bg = isSelected ? Theme.NEBULA
-                    : tabIndex == hoveredTabIndex ? Theme.CRATER
-                    : Theme.VOID;
+
+            boolean isDragging = (tabIndex == draggingTabIndex);
+
+            Color bg;
+            if (isDragging) {
+                bg = DRAG_HIGHLIGHT;
+            } else if (isSelected) {
+                bg = Theme.NEBULA;
+            } else if (tabIndex == hoveredTabIndex) {
+                bg = Theme.CRATER;
+            } else {
+                bg = Theme.VOID;
+            }
+
             g2.setColor(bg);
             g2.fill(new RoundRectangle2D.Float(x + 1, y + 2, w - 2, h - 2, 6, 6));
-            if (isSelected) {
+
+            if (isDragging) {
+                g2.setColor(new Color(0xC0, 0x40, 0x80));
+                g2.setStroke(new BasicStroke(1.5f));
+                g2.draw(new RoundRectangle2D.Float(x + 1, y + 2, w - 2, h - 3, 6, 6));
+            } else if (isSelected) {
                 g2.setColor(Theme.BORDER);
                 g2.draw(new RoundRectangle2D.Float(x + 1, y + 2, w - 2, h - 2, 6, 6));
             }
+
             g2.dispose();
         }
 

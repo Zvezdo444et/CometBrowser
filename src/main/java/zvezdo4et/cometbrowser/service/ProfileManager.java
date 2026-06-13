@@ -17,6 +17,7 @@ public class ProfileManager {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, BrowserProfile> profiles = new LinkedHashMap<>();
+    private final List<String> profileOrder = new ArrayList<>();
     private final File configFile = new File(
             UserDataDirUtil.getAppDataDir() + File.separator + "profiles.json");
 
@@ -49,6 +50,7 @@ public class ProfileManager {
                         entry.get("avatarColor"), entry.get("dataDir"));
                 new File(p.getDataDir()).mkdirs();
                 profiles.put(p.getId(), p);
+                profileOrder.add(p.getId());
             }
         } catch (IOException e) {
             LOG.warning("Failed to load profiles: " + e.getMessage());
@@ -57,7 +59,9 @@ public class ProfileManager {
 
     public void saveAll() {
         List<Map<String, String>> raw = new ArrayList<>();
-        for (BrowserProfile p : profiles.values()) {
+        for (String id : profileOrder) {
+            BrowserProfile p = profiles.get(id);
+            if (p == null) continue;
             Map<String, String> entry = new LinkedHashMap<>();
             entry.put("id", p.getId());
             entry.put("name", p.getName());
@@ -79,12 +83,14 @@ public class ProfileManager {
         BrowserProfile profile = new BrowserProfile(name, COMET_COLORS[colorIndex], dataDir);
         new File(dataDir).mkdirs();
         profiles.put(profile.getId(), profile);
+        profileOrder.add(profile.getId());
         saveAll();
         return profile;
     }
 
     public void deleteProfile(String profileId) {
         profiles.remove(profileId);
+        profileOrder.remove(profileId);
         saveAll();
     }
 
@@ -101,6 +107,19 @@ public class ProfileManager {
     }
 
     public List<BrowserProfile> getAllProfiles() {
-        return new ArrayList<>(profiles.values());
+        List<BrowserProfile> result = new ArrayList<>();
+        for (String id : profileOrder) {
+            BrowserProfile p = profiles.get(id);
+            if (p != null) result.add(p);
+        }
+        return result;
+    }
+
+    public void reorderProfiles(List<String> orderedIds) {
+        profileOrder.clear();
+        for (String id : orderedIds) {
+            if (profiles.containsKey(id)) profileOrder.add(id);
+        }
+        saveAll();
     }
 }
