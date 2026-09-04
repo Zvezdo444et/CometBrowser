@@ -23,7 +23,7 @@ CometBrowser — это легкий и современный веб-брауз
    mvn clean package
 4. Запустите собранный jar-файл:
     ```bash
-   java -jar target/CometBrowser-1.3.jar
+   java -jar target/CometBrowser-1.4.jar
 ---
 Лицензия
 Этот проект распространяется под лицензией GNU Affero General Public License v3.0 (AGPL-3.0).
