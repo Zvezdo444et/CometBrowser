@@ -13,8 +13,11 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 public class HomePanel extends JPanel {
+
+    private static final Logger LOG = Logger.getLogger(HomePanel.class.getName());
 
     private final Consumer<String> onNavigate;
     private JPanel bookmarksGrid;
@@ -181,6 +184,27 @@ public class HomePanel extends JPanel {
         bookmarksGrid.repaint();
     }
 
+    private void applyHandCursorRecursively(Component c) {
+        c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        if (c instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                applyHandCursorRecursively(child);
+            }
+        }
+    }
+
+    private void attachClickRecursively(Component c, MouseAdapter listener, Component tile) {
+        if (c != tile) {
+            c.addMouseListener(listener);
+        }
+        c.addMouseMotionListener(listener);
+        if (c instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                attachClickRecursively(child, listener, tile);
+            }
+        }
+    }
+
     private JPanel buildBookmarkTile(Bookmark bookmark) {
         JPanel tile = new JPanel(new BorderLayout()) {
             @Override
@@ -199,7 +223,6 @@ public class HomePanel extends JPanel {
         tile.setMinimumSize(new Dimension(172, 84));
         tile.setMaximumSize(new Dimension(172, 84));
         tile.setBorder(new EmptyBorder(10, 12, 10, 12));
-        tile.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
         Color dotColor = colorForName(bookmark.getName());
         JPanel dot = new JPanel() {
@@ -218,24 +241,20 @@ public class HomePanel extends JPanel {
             }
         };
         dot.setOpaque(false);
-        dot.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
         JPanel dotWrap = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         dotWrap.setOpaque(false);
-        dotWrap.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         dotWrap.add(dot);
 
         JLabel nameLbl = new JLabel(bookmark.getName());
         nameLbl.setFont(Theme.FONT_REGULAR);
         nameLbl.setForeground(Theme.STARDUST);
         nameLbl.setMaximumSize(new Dimension(148, 20));
-        nameLbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
         JLabel urlLbl = new JLabel(shortUrl(bookmark.getUrl()));
         urlLbl.setFont(Theme.FONT_SMALL);
         urlLbl.setForeground(Theme.DIM);
         urlLbl.setMaximumSize(new Dimension(148, 16));
-        urlLbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
         JButton editBtn = new JButton(iconChar("edit")) {
             @Override
@@ -288,20 +307,17 @@ public class HomePanel extends JPanel {
 
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         actions.setOpaque(false);
-        actions.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         actions.add(editBtn);
         actions.add(removeBtn);
 
         JPanel topRow = new JPanel(new BorderLayout());
         topRow.setOpaque(false);
-        topRow.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         topRow.add(dotWrap, BorderLayout.WEST);
         topRow.add(actions, BorderLayout.EAST);
 
         JPanel textCol = new JPanel();
         textCol.setOpaque(false);
         textCol.setLayout(new BoxLayout(textCol, BoxLayout.Y_AXIS));
-        textCol.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         textCol.add(Box.createVerticalStrut(4));
         textCol.add(nameLbl);
         textCol.add(Box.createVerticalStrut(2));
@@ -310,93 +326,83 @@ public class HomePanel extends JPanel {
         tile.add(topRow, BorderLayout.NORTH);
         tile.add(textCol, BorderLayout.CENTER);
 
+        applyHandCursorRecursively(tile);
+        editBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        removeBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
         MouseAdapter clickListener = new MouseAdapter() {
             private boolean dragging = false;
-            private Point pressPoint;
+            private Point pressScreenPoint;
 
             @Override
             public void mousePressed(MouseEvent e) {
                 dragging = false;
-                pressPoint = e.getPoint();
-            }
-
-            @Override
-            public void mouseDragged(MouseEvent e) {
-                if (pressPoint != null) {
-                    int dx = Math.abs(e.getPoint().x - pressPoint.x);
-                    int dy = Math.abs(e.getPoint().y - pressPoint.y);
-                    if (dx > 5 || dy > 5) dragging = true;
-                }
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                if (!dragging && SwingUtilities.isLeftMouseButton(e)) {
-                    Component src = e.getComponent();
-                    if (src == editBtn || src == removeBtn) return;
-                    onNavigate.accept(bookmark.getUrl());
-                }
-                dragging = false;
-            }
-        };
-
-        tile.addMouseListener(clickListener);
-        tile.addMouseMotionListener(clickListener);
-
-        java.awt.event.MouseListener hoverListener = new MouseAdapter() {
-            @Override
-            public void mouseEntered(MouseEvent e) {
+                pressScreenPoint = e.getLocationOnScreen();
                 editBtn.setVisible(true);
                 removeBtn.setVisible(true);
             }
 
             @Override
-            public void mouseExited(MouseEvent e) {
-                Point p = e.getPoint();
-                SwingUtilities.convertPointToScreen(p, e.getComponent());
-                try {
-                    Point loc = tile.getLocationOnScreen();
-                    Rectangle bounds = new Rectangle(loc.x, loc.y, tile.getWidth(), tile.getHeight());
-                    if (!bounds.contains(p)) {
-                        editBtn.setVisible(false);
-                        removeBtn.setVisible(false);
-                    }
-                } catch (IllegalComponentStateException ex) {
-                    editBtn.setVisible(false);
-                    removeBtn.setVisible(false);
-                }
-            }
-        };
-
-        tile.addMouseListener(hoverListener);
-        topRow.addMouseListener(hoverListener);
-        actions.addMouseListener(hoverListener);
-        editBtn.addMouseListener(hoverListener);
-        removeBtn.addMouseListener(hoverListener);
-        textCol.addMouseListener(hoverListener);
-        dotWrap.addMouseListener(hoverListener);
-        dot.addMouseListener(hoverListener);
-        nameLbl.addMouseListener(hoverListener);
-        urlLbl.addMouseListener(hoverListener);
-
-        MouseAdapter textColClick = new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                clickListener.mousePressed(SwingUtilities.convertMouseEvent(e.getComponent(), e, tile));
+            public void mouseDragged(MouseEvent e) {
+                if (pressScreenPoint == null) return;
+                Point cur = e.getLocationOnScreen();
+                int dx = Math.abs(cur.x - pressScreenPoint.x);
+                int dy = Math.abs(cur.y - pressScreenPoint.y);
+                if (dx > 5 || dy > 5) dragging = true;
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
                 Component src = e.getComponent();
-                if (src == editBtn || src == removeBtn) return;
-                clickListener.mouseReleased(SwingUtilities.convertMouseEvent(e.getComponent(), e, tile));
+                boolean onActionButton = SwingUtilities.isDescendingFrom(src, editBtn)
+                        || src == editBtn
+                        || SwingUtilities.isDescendingFrom(src, removeBtn)
+                        || src == removeBtn;
+                if (!dragging && SwingUtilities.isLeftMouseButton(e) && !onActionButton) {
+                    onNavigate.accept(bookmark.getUrl());
+                }
+                dragging = false;
+                pressScreenPoint = null;
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                editBtn.setVisible(true);
+                removeBtn.setVisible(true);
+                tile.repaint();
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                Point p = e.getPoint();
+                Component comp = e.getComponent();
+                Point onTile = SwingUtilities.convertPoint(comp, p, tile);
+                if (onTile.x < 0 || onTile.y < 0 || onTile.x >= tile.getWidth() || onTile.y >= tile.getHeight()) {
+                    editBtn.setVisible(false);
+                    removeBtn.setVisible(false);
+                    tile.repaint();
+                }
             }
         };
-        textCol.addMouseListener(textColClick);
-        nameLbl.addMouseListener(textColClick);
-        urlLbl.addMouseListener(textColClick);
-        dot.addMouseListener(textColClick);
-        dotWrap.addMouseListener(textColClick);
+
+        attachClickRecursively(tile, clickListener, tile);
+        tile.addMouseListener(clickListener);
+        tile.addMouseMotionListener(clickListener);
+
+        editBtn.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                editBtn.setVisible(true);
+                removeBtn.setVisible(true);
+            }
+        });
+        removeBtn.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                editBtn.setVisible(true);
+                removeBtn.setVisible(true);
+            }
+        });
 
         return tile;
     }
@@ -426,7 +432,7 @@ public class HomePanel extends JPanel {
         plus.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         tile.add(plus, BorderLayout.CENTER);
 
-        tile.addMouseListener(new MouseAdapter() {
+        MouseAdapter addTileListener = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 showAddBookmarkDialog();
@@ -443,26 +449,9 @@ public class HomePanel extends JPanel {
                 plus.setForeground(Theme.DIM);
                 tile.repaint();
             }
-        });
-
-        plus.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                showAddBookmarkDialog();
-            }
-
-            @Override
-            public void mouseEntered(MouseEvent e) {
-                plus.setForeground(Theme.STARDUST);
-                tile.repaint();
-            }
-
-            @Override
-            public void mouseExited(MouseEvent e) {
-                plus.setForeground(Theme.DIM);
-                tile.repaint();
-            }
-        });
+        };
+        tile.addMouseListener(addTileListener);
+        plus.addMouseListener(addTileListener);
 
         return tile;
     }
@@ -490,6 +479,7 @@ public class HomePanel extends JPanel {
                 }
                 BookmarkManager.getInstance().addBookmark(name, url);
                 refreshBookmarks();
+                LOG.info("[HomePanel] Bookmark added: " + name + " -> " + url);
             }
             dialog.dispose();
         });

@@ -100,33 +100,10 @@ public class SessionPersistenceService {
         }
     }
 
-    public void reopenSession(String sessionId) {
-        TabSession s = sessions.get(sessionId);
-        if (s != null) {
-            s.setClosed(false);
-            s.setActive(true);
-            s.touch();
-            saveAll();
-        }
-    }
-
-    public void deleteSession(String sessionId) {
-        sessions.remove(sessionId);
-        saveAll();
-    }
-
     public List<TabSession> getActiveSessions() {
         return sessions.values().stream()
                 .filter(s -> !s.isClosed())
                 .sorted(java.util.Comparator.comparingInt(TabSession::getTabOrder))
                 .collect(Collectors.toList());
-    }
-
-    public List<TabSession> getClosedSessions() {
-        return sessions.values().stream().filter(TabSession::isClosed).collect(Collectors.toList());
-    }
-
-    public TabSession getSession(String sessionId) {
-        return sessions.get(sessionId);
     }
 }

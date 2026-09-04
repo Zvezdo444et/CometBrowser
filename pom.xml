@@ -6,7 +6,7 @@
 
     <groupId>zvezdo4et</groupId>
     <artifactId>CometBrowser</artifactId>
-    <version>1.3</version>
+    <version>1.4</version>
     <name>CometBrowser</name>
     <packaging>jar</packaging>
     <description>Веб-браузер на Java Swing с изолированными сессиями</description>

@@ -39,15 +39,8 @@ public class BrowserProfile {
         return avatarColor;
     }
 
-    public void setAvatarColor(String avatarColor) {
-        this.avatarColor = avatarColor;
-    }
-
     public String getDataDir() {
         return dataDir;
     }
 
-    public void setDataDir(String dataDir) {
-        this.dataDir = dataDir;
-    }
 }

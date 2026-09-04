@@ -3,16 +3,16 @@ package zvezdo4et.cometbrowser.controller;
 import zvezdo4et.cometbrowser.model.BrowserProfile;
 import zvezdo4et.cometbrowser.model.TabSession;
 import zvezdo4et.cometbrowser.service.BookmarkManager;
+import zvezdo4et.cometbrowser.service.DownloadManager;
 import zvezdo4et.cometbrowser.service.SessionPersistenceService;
+import zvezdo4et.cometbrowser.service.SettingsManager;
 import zvezdo4et.cometbrowser.util.Theme;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.FocusAdapter;
-import java.awt.event.FocusEvent;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
+import java.awt.event.*;
 import java.awt.geom.RoundRectangle2D;
+import java.io.File;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 
@@ -30,6 +30,8 @@ public class BrowserPanel extends JPanel {
 
     private final TabSession session;
     private final BrowserProfile profile;
+
+    private Consumer<String> onOpenNewTab;
 
     private WebView2Panel webView;
 
@@ -66,6 +68,11 @@ public class BrowserPanel extends JPanel {
         } else {
             updateStarState();
         }
+        LOG.info("[BrowserPanel] Created session=" + session.getId() + " profile=" + profile.getId());
+    }
+
+    public void setOnOpenNewTab(Consumer<String> cb) {
+        this.onOpenNewTab = cb;
     }
 
     @Override
@@ -136,7 +143,7 @@ public class BrowserPanel extends JPanel {
             }
         };
         addressBar.setOpaque(false);
-        addressBar.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 36));
+        addressBar.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 42));
         addressBar.setFont(Theme.FONT_REGULAR);
         addressBar.setForeground(Theme.STARDUST);
         addressBar.setCaretColor(Theme.STARDUST);
@@ -155,15 +162,38 @@ public class BrowserPanel extends JPanel {
             }
         });
 
+        addressBar.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (webView != null) {
+                    webView.lowerNativeFocusSync();
+                }
+                addressBar.requestFocusInWindow();
+                SwingUtilities.invokeLater(() -> {
+                    addressBar.getCaret().setVisible(true);
+                    addressBar.getCaret().setSelectionVisible(true);
+                    addressBar.repaint();
+                });
+            }
+        });
+
         addressBar.addFocusListener(new FocusAdapter() {
             @Override
             public void focusGained(FocusEvent e) {
-                SwingUtilities.invokeLater(addressBar::selectAll);
+                SwingUtilities.invokeLater(() -> {
+                    addressBar.selectAll();
+                    addressBar.getCaret().setVisible(true);
+                    addressBar.getCaret().setBlinkRate(500);
+                });
                 addressBar.repaint();
             }
 
             @Override
             public void focusLost(FocusEvent e) {
+                Component opposite = e.getOppositeComponent();
+                if (opposite == null || opposite instanceof Canvas) {
+                    if (webView != null) webView.restoreNativeFocus();
+                }
                 addressBar.setSelectionStart(0);
                 addressBar.setSelectionEnd(0);
                 addressBar.repaint();
@@ -179,14 +209,14 @@ public class BrowserPanel extends JPanel {
 
         JLayeredPane addressLayer = new JLayeredPane();
         addressLayer.setOpaque(false);
-        addressLayer.setPreferredSize(new Dimension(0, 32));
+        addressLayer.setPreferredSize(new Dimension(0, 34));
         addressLayer.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
                 int w = addressLayer.getWidth();
                 int h = addressLayer.getHeight();
                 addressBar.setBounds(0, 0, w, h);
-                starBtn.setBounds(w - 30, (h - 24) / 2, 24, 24);
+                starBtn.setBounds(w - 34, (h - 30) / 2, 30, 30);
             }
         });
 
@@ -196,10 +226,11 @@ public class BrowserPanel extends JPanel {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 boolean filled = Boolean.TRUE.equals(getClientProperty("bookmarked"));
-                Color c = filled ? new Color(0xFB, 0xBF, 0x24)
+                Color c = filled
+                        ? new Color(0xFB, 0xBF, 0x24)
                         : (getModel().isRollover() ? Theme.STARDUST : Theme.DIM);
                 g2.setColor(c);
-                g2.setFont(Theme.FONT_ICON.deriveFont(15f));
+                g2.setFont(Theme.FONT_ICON.deriveFont(21f));
                 String txt = filled ? "\u2605" : "\u2606";
                 FontMetrics fm = g2.getFontMetrics();
                 int tx = (getWidth() - fm.stringWidth(txt)) / 2;
@@ -248,7 +279,38 @@ public class BrowserPanel extends JPanel {
 
         add(top, BorderLayout.NORTH);
 
+        removeSpaceBindings(toolbar);
+        removeSpaceBindings(navBtns);
+        removeSpaceBindings(backBtn);
+        removeSpaceBindings(forwardBtn);
+        removeSpaceBindings(reloadBtn);
+        removeSpaceBindings(homeBtn);
+
         updateStarState();
+    }
+
+    private static void removeSpaceBindings(JComponent c) {
+        Action noop = new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+            }
+        };
+        c.getActionMap().put("comet.noop", noop);
+        KeyStroke[] blocked = {
+                KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0),
+                KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, true),
+                KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0),
+                KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0),
+                KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0),
+                KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0)
+        };
+        for (int map : new int[]{
+                JComponent.WHEN_FOCUSED,
+                JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT,
+                JComponent.WHEN_IN_FOCUSED_WINDOW}) {
+            InputMap im = c.getInputMap(map);
+            for (KeyStroke ks : blocked) im.put(ks, "comet.noop");
+        }
     }
 
     private JButton makeNavBtn(String text, String tooltip) {
@@ -257,14 +319,13 @@ public class BrowserPanel extends JPanel {
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                if (getModel().isRollover() && isEnabled()) {
-                    g2.setColor(Theme.BORDER);
-                    g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 6, 6));
-                }
+                Color bg = (getModel().isRollover() && isEnabled()) ? Theme.BORDER : Theme.CRATER;
+                g2.setColor(bg);
+                g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 8, 8));
                 g2.setColor(isEnabled()
                         ? (getModel().isRollover() ? Theme.TAIL : Theme.STARDUST)
                         : Theme.DIM);
-                g2.setFont(Theme.FONT_ICON.deriveFont(16f));
+                g2.setFont(Theme.FONT_ICON.deriveFont(17f));
                 FontMetrics fm = g2.getFontMetrics();
                 String t = getText();
                 int tx = (getWidth() - fm.stringWidth(t)) / 2;
@@ -278,8 +339,9 @@ public class BrowserPanel extends JPanel {
         btn.setContentAreaFilled(false);
         btn.setFocusPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.setFont(Theme.FONT_ICON.deriveFont(16f));
+        btn.setFont(Theme.FONT_ICON.deriveFont(17f));
         btn.setToolTipText(tooltip);
+        removeSpaceBindings(btn);
         return btn;
     }
 
@@ -306,14 +368,11 @@ public class BrowserPanel extends JPanel {
     private void toggleBookmark() {
         String url = session.getUrl();
         if (url == null || url.isBlank() || url.equals(HOME_URL)) return;
-
         String name = (title == null || title.isBlank() || title.equals("Новая вкладка")) ? null : title;
         BookmarkManager.getInstance().toggleBookmark(name, url);
         updateStarState();
-
-        if (homePanel != null) {
-            homePanel.refreshBookmarks();
-        }
+        if (homePanel != null) homePanel.refreshBookmarks();
+        LOG.info("[BrowserPanel] Bookmark toggled for " + url);
     }
 
     private void showHome() {
@@ -323,12 +382,9 @@ public class BrowserPanel extends JPanel {
         if (onTitleChange != null) onTitleChange.accept(title);
         SessionPersistenceService.getInstance().updateSession(session);
 
-        if (webView != null) {
-            webView.setVisible(false);
-        }
+        if (webView != null) webView.setVisible(false);
 
         contentArea.removeAll();
-
         if (homePanel == null) {
             homePanel = new HomePanel(query -> navigateTo(query));
         } else {
@@ -339,34 +395,37 @@ public class BrowserPanel extends JPanel {
         contentArea.repaint();
 
         updateStarState();
-
         backBtn.setEnabled(false);
         forwardBtn.setEnabled(false);
     }
 
     private void goHome() {
-        if (webView != null) {
-            webView.stop();
-        }
+        if (webView != null) webView.stop();
         showHome();
     }
 
+    private boolean isWebViewDisplayed() {
+        return webView != null && contentArea.isAncestorOf(webView);
+    }
+
     private void showWebView() {
-        contentArea.removeAll();
-        if (webView != null) {
-            webView.setVisible(true);
+        if (webView == null) return;
+        if (!isWebViewDisplayed()) {
+            contentArea.removeAll();
             contentArea.add(webView, BorderLayout.CENTER);
+            contentArea.revalidate();
+            contentArea.repaint();
         }
-        contentArea.revalidate();
-        contentArea.repaint();
+        webView.setVisible(true);
+        webView.forceResize();
     }
 
     private void initWebView(String url) {
         if (disposed) return;
 
         if (webView == null) {
-            String userDataFolder = profile.getDataDir() + java.io.File.separator + "webview2";
-            new java.io.File(userDataFolder).mkdirs();
+            String userDataFolder = profile.getDataDir() + File.separator + "webview2";
+            new File(userDataFolder).mkdirs();
 
             webView = new WebView2Panel(userDataFolder, url);
             webView.setPreferredSize(new Dimension(800, 600));
@@ -391,15 +450,39 @@ public class BrowserPanel extends JPanel {
                 progressBar.setIndeterminate(isLoading);
                 progressBar.setVisible(isLoading);
                 setReloadStopping(isLoading);
-                if (!isLoading) updateNavButtons();
+                if (!isLoading) {
+                    updateNavButtons();
+                    webView.forceResize();
+                }
             });
+
+            webView.setDownloadsFolder(SettingsManager.getInstance().getDownloadsFolder());
+            webView.setDownloadListener(new WebView2Panel.DownloadListener() {
+                @Override
+                public void onStarted(String url, String filePath, long totalBytes) {
+                    LOG.info("[BrowserPanel] Download started: " + url + " -> " + filePath);
+                    DownloadManager.getInstance().startNativeDownload(url, filePath, totalBytes);
+                }
+
+                @Override
+                public void onProgress(String filePath, long bytesReceived, long totalBytes) {
+                    DownloadManager.getInstance().updateProgress(filePath, bytesReceived, totalBytes);
+                }
+
+                @Override
+                public void onStateChanged(String filePath, int state) {
+                    DownloadManager.getInstance().updateState(filePath, state);
+                }
+            });
+
         } else {
             webView.navigate(url);
         }
 
         showWebView();
         updateStarState();
-        LOG.info("[BrowserPanel] WebView2 initialized for session=" + session.getId());
+        LOG.info("[BrowserPanel] WebView2 initialized, session=" + session.getId()
+                + " url=" + url);
     }
 
     private void updateNavButtons() {
@@ -420,14 +503,8 @@ public class BrowserPanel extends JPanel {
             return;
         }
 
-        String url;
-        if (input.startsWith("http://") || input.startsWith("https://")) {
-            url = input;
-        } else if (input.contains(".") && !input.contains(" ")) {
-            url = "https://" + input;
-        } else {
-            url = "https://www.google.com/search?q=" + input.replace(" ", "+");
-        }
+        String url = resolveUrl(input);
+        LOG.info("[BrowserPanel] Navigate to: " + url);
 
         addressBar.setText(url);
         webViewInitScheduled = true;
@@ -435,6 +512,11 @@ public class BrowserPanel extends JPanel {
         if (webView != null) {
             showWebView();
             webView.navigate(url);
+            Timer kick = new Timer(180, ev -> {
+                if (webView != null) webView.forceResize();
+            });
+            kick.setRepeats(false);
+            kick.start();
         } else {
             initWebView(url);
         }
@@ -442,6 +524,55 @@ public class BrowserPanel extends JPanel {
         session.setUrl(url);
         SessionPersistenceService.getInstance().updateSession(session);
         updateStarState();
+    }
+
+    public static String resolveUrl(String input) {
+        if (input == null || input.isBlank()) return input;
+        input = input.strip();
+
+        if (input.startsWith("http://") || input.startsWith("https://")
+                || input.startsWith("file://")) {
+            return input;
+        }
+
+        if (looksLikeLocalPath(input)) {
+            try {
+                File f = new File(input);
+                if (f.exists()) {
+                    return f.toURI().toString();
+                }
+            } catch (Exception ignored) {
+            }
+            try {
+                return new File(input).toURI().toString();
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (input.contains(".") && !input.contains(" ")) {
+            return "https://" + input;
+        }
+
+        return buildSearchUrl(input);
+    }
+
+    private static boolean looksLikeLocalPath(String s) {
+        if (s.startsWith("/")) return true;
+        if (s.startsWith("\\\\")) return true;
+        if (s.length() >= 2 && s.charAt(1) == ':') return true;
+        return false;
+    }
+
+    private static String buildSearchUrl(String query) {
+        String engine = SettingsManager.getInstance().getSearchEngine();
+        String encoded = java.net.URLEncoder.encode(query,
+                java.nio.charset.StandardCharsets.UTF_8);
+        return switch (engine) {
+            case "yandex" -> "https://yandex.ru/search/?text=" + encoded;
+            case "duckduckgo" -> "https://duckduckgo.com/?q=" + encoded;
+            case "bing" -> "https://www.bing.com/search?q=" + encoded;
+            default -> "https://www.google.com/search?q=" + encoded;
+        };
     }
 
     public void setOnTitleChange(Consumer<String> cb) {
@@ -456,13 +587,16 @@ public class BrowserPanel extends JPanel {
         return session;
     }
 
-    public BrowserProfile getProfile() {
-        return profile;
+    public void forceRefreshWebView() {
+        if (webView != null) {
+            webView.forceResize();
+        }
     }
 
     public void dispose() {
         if (disposed) return;
         disposed = true;
+        LOG.info("[BrowserPanel] Disposing session=" + session.getId());
         if (webView != null) {
             webView.dispose();
             webView = null;

@@ -25,6 +25,18 @@ public interface CometWebView2Library extends StdCallLibrary {
         void invoke(boolean isLoading, Pointer userData);
     }
 
+    interface DownloadStartedCallback extends Callback {
+        void invoke(WString url, WString filePath, long totalBytes, Pointer userData);
+    }
+
+    interface DownloadProgressCallback extends Callback {
+        void invoke(WString filePath, long bytesReceived, long totalBytes, Pointer userData);
+    }
+
+    interface DownloadStateChangedCallback extends Callback {
+        void invoke(WString filePath, int state, Pointer userData);
+    }
+
     Pointer CometWV2_Create(
             HWND parentHwnd,
             WString userDataFolder,
@@ -55,4 +67,12 @@ public interface CometWebView2Library extends StdCallLibrary {
     void CometWV2_Destroy(Pointer wv);
 
     boolean CometWV2_IsReady(Pointer wv);
+
+    void CometWV2_SetDownloadFolder(Pointer wv, WString folder);
+
+    void CometWV2_SetDownloadCallback(Pointer wv,
+                                      DownloadStartedCallback onStarted,
+                                      DownloadProgressCallback onProgress,
+                                      DownloadStateChangedCallback onStateChanged,
+                                      Pointer userData);
 }
